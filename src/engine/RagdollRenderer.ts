@@ -7,6 +7,7 @@ import { ellipse, line, path, shape } from './canvasDraw'
 import type { Pen } from './canvasDraw'
 import { GadgetRenderer } from './GadgetRenderer'
 import type { GadgetSystem } from './GadgetSystem'
+import { DISPLAY_FONT, SPEECH_FONT, gameFontsReady } from '../utils/gameFonts'
 type Drag = { from: Vector; to: Vector }
 
 function buffer(width: number, height: number) {
@@ -91,8 +92,9 @@ export class RagdollRenderer {
   private limbs = new Map<string, HTMLCanvasElement>()
   private photo: HTMLCanvasElement | null = null
   private stitched = new Map<boolean, HTMLCanvasElement>()
-  private bubble: { message: string; canvas: HTMLCanvasElement; width: number; height: number } | null = null
+  private bubble: { message: string; lineWidth: number; canvas: HTMLCanvasElement; width: number; height: number } | null = null
   private faceRequest = 0
+  private textReady = false
   private outfit: Outfit = DEFAULT_PROFILE.outfit
   private scale = 1
 
@@ -109,6 +111,10 @@ export class RagdollRenderer {
   setProfile(profile: Profile) {
     this.outfit = profile.outfit
     const request = ++this.faceRequest
+    this.textReady = false
+    void gameFontsReady(profile.name, profile.roasts.join(' ')).then(() => {
+      if (request === this.faceRequest) this.textReady = true
+    })
     if (!profile.face) {
       this.photo = null
       return
@@ -457,6 +463,13 @@ export class RagdollRenderer {
       ctx.restore()
     }
 
+    if (this.textReady) this.drawText(room, head, game)
+    ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0)
+    this.gadgetArt.reticle(ctx, gadgets)
+  }
+
+  private drawText(room: Room, head: Limb | null, game: GameDirector) {
+    const ctx = this.ctx
     for (const callout of game.callouts) {
       ctx.save()
       ctx.translate(clamp(callout.x, room.left + 88, room.right - 88), clamp(callout.y - callout.age * 0.046, room.ceiling + 22, room.floor - 16))
@@ -465,17 +478,19 @@ export class RagdollRenderer {
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
       ctx.lineJoin = 'round'
-      ctx.font = callout.accent ? '800 22px system-ui' : 'italic 950 37px system-ui'
+      ctx.font = '700 ' + (callout.accent ? '22px ' : '37px ') + DISPLAY_FONT
       ctx.strokeStyle = '#352217'
       ctx.lineWidth = callout.accent ? 4 : 5.5
+      ctx.shadowColor = '#35221770'
+      ctx.shadowBlur = 2
+      ctx.shadowOffsetY = 2
       ctx.strokeText(callout.text, 0, 0)
+      ctx.shadowColor = 'transparent'
       ctx.fillStyle = callout.accent ? '#ffcd62' : '#ffedbf'
       ctx.fillText(callout.text, 0, 0)
       ctx.restore()
     }
     if (head && game.speech) this.speech(room, head, game.speech.text, game.speech.until - game.now)
-    ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0)
-    this.gadgetArt.reticle(ctx, gadgets)
   }
 
   private drawLimb(limb: Limb, game: GameDirector) {
@@ -586,24 +601,29 @@ export class RagdollRenderer {
     }
   }
 
-  private speechBubble(message: string) {
-    if (this.bubble?.message === message) return this.bubble
+  private speechBubble(message: string, lineWidth: number) {
+    if (this.bubble?.message === message && this.bubble.lineWidth === lineWidth) return this.bubble
     const ctx = this.ctx
     ctx.save()
-    ctx.font = '750 20px system-ui'
+    ctx.font = '400 20px ' + SPEECH_FONT
+    const ellipsize = (value: string) => {
+      const characters = Array.from(value)
+      while (characters.length && ctx.measureText(characters.join('') + '…').width > lineWidth) characters.pop()
+      return characters.join('') + '…'
+    }
     const words = message.split(/\s+/)
     const lines: string[] = []
     let row = ''
     for (const word of words) {
-      const safeWord = ctx.measureText(word).width > 235 ? word.slice(0, 18) + '…' : word
-      if (row && ctx.measureText(row + ' ' + safeWord).width > 240) {
+      const safeWord = ctx.measureText(word).width > lineWidth ? ellipsize(word) : word
+      if (row && ctx.measureText(row + ' ' + safeWord).width > lineWidth) {
         lines.push(row)
         row = safeWord
       } else row += (row ? ' ' : '') + safeWord
     }
     if (row) lines.push(row)
     const visible = lines.slice(0, 3)
-    if (lines.length > 3) visible[2] = (visible[2] ?? '').slice(0, 18) + '…'
+    if (lines.length > 3) visible[2] = ellipsize(visible[2] ?? '')
     const w = Math.max(...visible.map(text => ctx.measureText(text).width), 38) + 32
     const h = 22 + visible.length * 24
     ctx.restore()
@@ -622,20 +642,21 @@ export class RagdollRenderer {
     bubble.fillStyle = '#36261e'
     bubble.textAlign = 'center'
     bubble.textBaseline = 'middle'
-    bubble.font = '750 20px system-ui'
+    bubble.font = '400 20px ' + SPEECH_FONT
     visible.forEach((text, i) => bubble.fillText(text, w / 2, 22 + i * 24))
-    const art = { message, canvas, width: w, height: h }
+    const art = { message, lineWidth, canvas, width: w, height: h }
     this.bubble = art
     return art
   }
 
   private speech(room: Room, limb: Limb, message: string, remaining: number) {
     const ctx = this.ctx
-    const { canvas, width: w, height: h } = this.speechBubble(message)
+    const lineWidth = clamp(Math.floor((room.right - room.left) * 0.42 - 32), 64, 240)
+    const { canvas, width: w, height: h } = this.speechBubble(message, lineWidth)
     const { x: anchorX, y: anchorY } = limb.body.position
     const x = clamp(anchorX - w / 2, room.left + 8, room.right - w - 8)
     const above = anchorY - h - 62 > room.ceiling
-    const y = above ? Math.min(room.floor - h - 16, anchorY - h - 62) : Math.min(room.floor - h - 10, anchorY + 57)
+    const y = clamp(above ? anchorY - h - 62 : anchorY + 57, room.ceiling + (above ? 4 : 14), room.floor - h - (above ? 16 : 10))
     const tip = clamp(anchorX, x + 16, x + w - 16)
     const edge = y + (above ? h - 2 : 2)
     ctx.save()

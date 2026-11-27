@@ -8,7 +8,9 @@ import { Icon } from './Icon'
 const SIZE = 320
 const MAX_WORKING_EDGE = 2048
 type Offset = { x: number; y: number }
+type CropPose = { zoom: number; offset: Offset }
 type CropImage = { source: CanvasImageSource; width: number; height: number }
+const INITIAL_CROP: CropPose = { zoom: 1, offset: { x: 0, y: 0 } }
 
 async function rasterType(file: File) {
   const bytes = new Uint8Array(await file.slice(0, 12).arrayBuffer())
@@ -16,6 +18,11 @@ async function rasterType(file: File) {
   if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return 'image/jpeg'
   if (String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' &&
       String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP') return 'image/webp'
+  if (String.fromCharCode(...bytes.slice(4, 8)) === 'ftyp') {
+    const brand = String.fromCharCode(...bytes.slice(8, 12))
+    if (brand === 'avif' || brand === 'avis') return 'image/avif'
+    if (['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1'].includes(brand)) return 'image/heic'
+  }
   return null
 }
 
@@ -54,16 +61,20 @@ function drawCrop(ctx: CanvasRenderingContext2D, image: CropImage, zoom: number,
   ctx.drawImage(image.source, (SIZE - crop.width) / 2 + crop.offset.x, (SIZE - crop.height) / 2 + crop.offset.y, crop.width, crop.height)
 }
 
+function cropPoint(event: PointerEvent<HTMLCanvasElement>): Offset {
+  const rect = event.currentTarget.getBoundingClientRect()
+  return { x: (event.clientX - rect.left) * SIZE / rect.width, y: (event.clientY - rect.top) * SIZE / rect.height }
+}
+
 export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; onClose: () => void; onSave: (profile: Profile) => void }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const preview = useRef<HTMLCanvasElement>(null)
   const request = useRef(0)
-  const drag = useRef<{ pointer: number; x: number; y: number } | null>(null)
+  const points = useRef(new Map<number, Offset>())
   const [image, setImage] = useState<CropImage | null>(null)
   const [face, setFace] = useState(profile.face)
   const [dirtyCrop, setDirtyCrop] = useState(false)
-  const [zoom, setZoom] = useState(1)
-  const [offset, setOffset] = useState<Offset>({ x: 0, y: 0 })
+  const [{ zoom, offset }, setCrop] = useState(INITIAL_CROP)
   const [name, setName] = useState(profile.name)
   const [roasts, setRoasts] = useState(profile.roasts.join('\n'))
   const [blend, setBlend] = useState(profile.blend)
@@ -82,6 +93,16 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
     })
     return () => { request.current++ }
   }, [profile.face])
+
+  useEffect(() => {
+    const modal = dialog.current
+    const viewport = window.visualViewport
+    if (!modal || !viewport) return
+    const fit = () => modal.style.setProperty('--crop-viewport-height', `${Math.floor(viewport.height * 0.92)}px`)
+    fit()
+    viewport.addEventListener('resize', fit)
+    return () => viewport.removeEventListener('resize', fit)
+  }, [])
 
   useEffect(() => {
     const ctx = preview.current?.getContext('2d')
@@ -136,7 +157,7 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
     const id = ++request.current
     if (file.size > 12 * 1024 * 1024) {
       setLoading(false)
-      setError('Choose a PNG, JPG, or WebP under 12 MB.')
+      setError('Choose a photo under 12 MB.')
       return
     }
     setError('')
@@ -146,7 +167,7 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
       const type = await rasterType(file)
       if (id !== request.current) return
       if (!type) {
-        setError('Choose a PNG, JPG, or WebP under 12 MB.')
+        setError('Choose a PNG, JPG, WebP, AVIF, or HEIC photo.')
         return
       }
       url = URL.createObjectURL(file.type === type ? file : new Blob([file], { type }))
@@ -154,8 +175,8 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
       if (id !== request.current) return
       setImage(selected)
       setDirtyCrop(true)
-      setZoom(1)
-      setOffset({ x: 0, y: 0 })
+      points.current.clear()
+      setCrop(INITIAL_CROP)
     } catch {
       if (id === request.current) setError('This image could not be opened. Try another file.')
     } finally {
@@ -167,18 +188,37 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
   function pan(dx: number, dy: number) {
     if (!image) return
     setDirtyCrop(true)
-    setOffset(current => cropBounds(image, zoom, { x: current.x + dx, y: current.y + dy }).offset)
+    setCrop(current => ({ ...current, offset: cropBounds(image, current.zoom, { x: current.offset.x + dx, y: current.offset.y + dy }).offset }))
   }
 
   function pointerMove(event: PointerEvent<HTMLCanvasElement>) {
-    const active = drag.current
-    if (!active || active.pointer !== event.pointerId) return
-    const width = event.currentTarget.getBoundingClientRect().width
-    if (!width) return
-    const scale = SIZE / width
-    pan((event.clientX - active.x) * scale, (event.clientY - active.y) * scale)
-    active.x = event.clientX
-    active.y = event.clientY
+    const active = points.current
+    const previous = active.get(event.pointerId)
+    if (!previous || !image) return
+    const next = cropPoint(event)
+    active.set(event.pointerId, next)
+    const other = Array.from(active).find(([id]) => id !== event.pointerId)?.[1]
+    if (!other) {
+      pan(next.x - previous.x, next.y - previous.y)
+      return
+    }
+    const before = Math.hypot(previous.x - other.x, previous.y - other.y)
+    const after = Math.hypot(next.x - other.x, next.y - other.y)
+    if (before < 1 || after < 1) return
+    setDirtyCrop(true)
+    setCrop(current => {
+      const zoom = clamp(current.zoom * after / before, 1, 3)
+      const ratio = zoom / current.zoom
+      const offset = {
+        x: (next.x + other.x - SIZE) / 2 - ((previous.x + other.x - SIZE) / 2 - current.offset.x) * ratio,
+        y: (next.y + other.y - SIZE) / 2 - ((previous.y + other.y - SIZE) / 2 - current.offset.y) * ratio,
+      }
+      return { zoom, offset: cropBounds(image, zoom, offset).offset }
+    })
+  }
+
+  function endPointer(event: PointerEvent<HTMLCanvasElement>) {
+    points.current.delete(event.pointerId)
   }
 
   function keyPan(event: KeyboardEvent<HTMLCanvasElement>) {
@@ -229,30 +269,36 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
                 ref={preview} width={SIZE} height={SIZE}
                 className={image ? 'has-photo' : undefined}
                 tabIndex={image ? 0 : undefined}
-                aria-label="Circular face crop. Use the arrow keys to pan the photo."
+                aria-label="Circular face crop. Drag or use arrow keys to pan. Pinch to zoom."
                 onKeyDown={keyPan} onPointerMove={pointerMove}
                 onPointerDown={event => {
-                  if (!image || event.button !== 0 || drag.current) return
+                  if (!image || event.button !== 0 || points.current.size >= 2) return
                   event.currentTarget.setPointerCapture(event.pointerId)
-                  drag.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY }
+                  points.current.set(event.pointerId, cropPoint(event))
                 }}
-                onLostPointerCapture={event => { if (drag.current?.pointer === event.pointerId) drag.current = null }}
+                onPointerUp={endPointer} onPointerCancel={endPointer} onLostPointerCapture={endPointer}
               />
             </div>
-            <label className="file-button control">
-              <Icon name="upload" size={17} /> {loading ? 'Opening photo…' : 'Choose photo'}
-              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={event => { void selectFile(event) }} />
-            </label>
+            <div className="photo-actions">
+              <label className="file-button control">
+                <Icon name="upload" size={17} /> {loading ? 'Opening photo…' : 'Choose photo'}
+                <input type="file" accept="image/*" onChange={event => { void selectFile(event) }} />
+              </label>
+              <label className="file-button control camera-button">
+                Camera
+                <input type="file" accept="image/*" capture="user" onChange={event => { void selectFile(event) }} />
+              </label>
+            </div>
             {(image || face) && <button className="text-btn" type="button" onClick={() => {
               request.current++
               setFace(null); setImage(null); setDirtyCrop(false); setLoading(false)
-              setZoom(1); setOffset({ x: 0, y: 0 }); setError('')
+              points.current.clear(); setCrop(INITIAL_CROP); setError('')
             }}>Use stitched face</button>}
             {error && <p className="field-error" role="alert">{error}</p>}
           </section>
           <section className="fields" aria-label="Friend settings">
             <label className="field">Friend’s name
-              <input autoFocus maxLength={24} value={name} onChange={event => setName(event.target.value)} placeholder="Buddy" />
+              <input maxLength={24} value={name} onChange={event => setName(event.target.value)} placeholder="Buddy" />
             </label>
             <label className="field">Custom roasts <span className="field-hint">One per line</span>
               <textarea rows={4} maxLength={688} value={roasts} onChange={event => setRoasts(event.target.value)} placeholder={'Take it easy!\nIs that all you got?'} />
@@ -260,9 +306,9 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
             <label className="field range-field"><span>Photo zoom</span><output>{Math.round(zoom * 100)}%</output>
               <input type="range" min={1} max={3} step={0.01} value={zoom} disabled={!image} onChange={event => {
                 const value = Number(event.target.value)
-                setZoom(value)
+                if (!image) return
                 setDirtyCrop(true)
-                if (image) setOffset(current => cropBounds(image, value, current).offset)
+                setCrop(current => ({ zoom: value, offset: cropBounds(image, value, current.offset).offset }))
               }} />
             </label>
             <label className="field outfit-field">Outfit color

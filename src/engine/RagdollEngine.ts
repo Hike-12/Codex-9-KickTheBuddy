@@ -42,7 +42,7 @@ const JOINTS: Array<[Part, Part, number, number, number, number]> = [
 
 type Joint = { a: RigidBody; b: RigidBody; limit: number; spring: number }
 type Doll = { composite: MatterComposite; limbs: Limb[]; head: Limb; joints: Joint[]; suspension: Pin | null }
-type Pointer = { id: number; point: Vector; velocity: Vector; time: number }
+type Pointer = { id: number; point: Vector; velocity: Vector; time: number; pending: RigidBody | null }
 
 const zero = () => ({ x: 0, y: 0 })
 
@@ -195,19 +195,19 @@ export class RagdollEngine {
   private resize = () => {
     const rect = this.canvas.getBoundingClientRect()
     if (rect.width < 1 || rect.height < 1) return
-    const roomWidth = rect.width <= 510 ? 560 : 690
-    const floorRatio = rect.width <= 510 && rect.height < 670 ? 0.79 : 0.835
+    const phone = rect.width < 500
     const shortLandscape = rect.width > rect.height && rect.height <= 470 && rect.width <= 820
+    const floorRatio = shortLandscape && rect.width < 640 ? 0.77 : phone ? 0.84 : 0.835
     const ceilingCss = Math.max(rect.height * 0.103, shortLandscape
-      ? Math.min(142, rect.height * 0.45)
-      : Math.min(rect.width <= 760 ? 196 : 132, rect.height * 0.35))
+      ? Math.min(rect.width < 640 ? 135 : 142, rect.height * 0.45)
+      : Math.min(rect.width < 640 ? 164 : rect.width <= 760 ? 196 : 132, rect.height * 0.35))
     const floorCss = rect.height * floorRatio
-    this.cssScale = Math.min(Math.min(rect.width / roomWidth, rect.height / 625) * 1.07,
+    this.cssScale = Math.min(Math.min(rect.width / 690, rect.height / 625) * 1.07,
       (floorCss - ceilingCss) / 378, rect.width * 0.826 / 378, 1.45)
     const width = rect.width / this.cssScale
     const height = rect.height / this.cssScale
     const old = this.room
-    const gutter = Math.min(width * 0.087, 102)
+    const gutter = Math.min(width * (phone ? 0.066 : 0.087), phone ? 60 : 102)
     this.room = { width, height, left: gutter, right: width - gutter, ceiling: ceilingCss / this.cssScale, floor: floorCss / this.cssScale }
     const { left, right, floor, ceiling } = this.room
     const pixelRatio = this.pixelRatio = Math.min(devicePixelRatio || 1, 2)
@@ -321,7 +321,7 @@ export class RagdollEngine {
   }
 
   private onDown = (event: PointerEvent) => {
-    if (this.pointer || this.gadgetPointer !== null || this.paused || !event.isPrimary) return
+    if (this.pointer || this.gadgetPointer !== null || this.paused) return
     const point = this.pointerPoint(event)
     if (this.gadgets.tool !== 'grab') {
       if (event.button !== 0 && !(event.button === 2 && this.gadgets.tool === 'impact')) return
@@ -333,8 +333,12 @@ export class RagdollEngine {
     if (event.button !== 0) return
     const body = this.hit(point)
     if (!body || !this.doll) return
-    this.pointer = { id: event.pointerId, point, velocity: zero(), time: event.timeStamp }
+    this.pointer = { id: event.pointerId, point, velocity: zero(), time: event.timeStamp, pending: event.pointerType === 'touch' ? body : null }
     this.canvas.setPointerCapture(event.pointerId)
+    if (!this.pointer.pending) this.startGrab(body, point)
+  }
+
+  private startGrab(body: RigidBody, point: Vector) {
     this.canvas.dataset.grabbing = 'true'
     this.unhang()
     Object.assign(this.mouse.position, point)
@@ -350,7 +354,9 @@ export class RagdollEngine {
   }
 
   private onMove = (event: PointerEvent) => {
-    if (!event.isPrimary || this.paused) return
+    if (this.paused) return
+    const active = this.pointer?.id ?? this.gadgetPointer
+    if (active === null ? !event.isPrimary : active !== event.pointerId) return
     const point = this.pointerPoint(event)
     if (this.gadgets.tool !== 'grab') {
       this.gadgets.move(point)
@@ -359,6 +365,11 @@ export class RagdollEngine {
     if (this.pointer?.id === event.pointerId) {
       const { left, right, floor, ceiling } = this.room
       const p = this.pointer
+      if (p.pending) {
+        if (Vec.magnitude(Vec.sub(point, p.point)) * this.cssScale < 6) return
+        this.startGrab(p.pending, p.point)
+        p.pending = null
+      }
       const dt = Math.max(5, event.timeStamp - p.time)
       p.velocity = {
         x: p.velocity.x * 0.28 + (point.x - p.point.x) * STEP / dt * 0.72,
@@ -370,7 +381,7 @@ export class RagdollEngine {
       this.mouse.position.y = clamp(point.y, ceiling - 24, floor + 24)
       return
     }
-    if (this.pointer || !event.isPrimary || this.paused || (event.buttons && event.pointerType !== 'touch')) return
+    if (this.pointer || (event.buttons && event.pointerType !== 'touch')) return
     const body = this.hit(point)
     this.canvas.dataset.hover = body ? 'true' : 'false'
     const previous = this.hover
@@ -383,11 +394,15 @@ export class RagdollEngine {
 
   private onUp = (event: PointerEvent) => {
     if (this.gadgetPointer === event.pointerId) {
+      this.gadgets.move(this.pointerPoint(event))
       this.stopGadget(true)
       return
     }
     const pointer = this.pointer
     if (!pointer || pointer.id !== event.pointerId) return
+    if (pointer.pending && !this.gadgets.ice && Vec.magnitude(Vec.sub(this.pointerPoint(event), pointer.point)) * this.cssScale < 6) {
+      this.director.pet(pointer.pending.position)
+    }
     const body = this.grabConstraint.constraint.bodyB
     if (body && event.timeStamp - pointer.time < 100) {
       const speed = Vec.magnitude(pointer.velocity)

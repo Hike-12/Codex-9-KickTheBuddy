@@ -3,17 +3,22 @@ import { FaceCropModal } from './components/FaceCropModal'
 import { GadgetDock } from './components/GadgetDock'
 import { Icon } from './components/Icon'
 import { RoomModifiersBar } from './components/RoomModifiersBar'
-import { CONTROLS_POPOVER_ID, StudioExports } from './components/StudioExports'
+import { CONTROLS_POPOVER_ID, SHARE_POPOVER_ID, StudioExports } from './components/StudioExports'
 import { CartoonAudio } from './engine/CartoonAudio'
 import { RagdollEngine } from './engine/RagdollEngine'
 import { TOOLS } from './engine/gadgetModel'
 import type { GravityMode, Tool } from './engine/gadgetModel'
 import { DEFAULT_PROFILE, INITIAL_HUD, profileFrom } from './engine/model'
 import type { Profile } from './engine/model'
-import { canRecordClip, createScorecard, downloadDare, recordDareClip } from './utils/dareExport'
+import { canRecordClip, canShareDare, createDareFile, createScorecard, downloadDare, recordDareClip, shareDare } from './utils/dareExport'
+import type { DareExportKind } from './utils/dareExport'
 import { copyDareLink, readDare } from './utils/dareShare'
 
 const PROFILE_KEY = 'jute-room:friend:v1'
+
+function DisplayDigits({ value }: { value: number }) {
+  return [...String(value)].map((digit, index) => <span className="display-digit" key={index}>{digit}</span>)
+}
 
 function readProfile(): Profile {
   try {
@@ -42,6 +47,7 @@ export default function App() {
   const [recordSupported] = useState(() => canRecordClip() && typeof AudioContext !== 'undefined')
   const [copying, setCopying] = useState(false)
   const [makingPoster, setMakingPoster] = useState(false)
+  const [ready, setReady] = useState<Partial<Record<DareExportKind, File>>>({})
   const [toast, setToast] = useState('')
   const canvas = useRef<HTMLCanvasElement>(null)
   const coin = useRef<HTMLDivElement>(null)
@@ -114,7 +120,36 @@ export default function App() {
 
   function toggleHud() {
     document.getElementById(CONTROLS_POPOVER_ID)?.hidePopover?.()
+    const shareMenu = document.getElementById(SHARE_POPOVER_ID)
+    if (shareMenu?.hasAttribute('popover')) shareMenu.hidePopover?.()
     setHudHidden(hidden => !hidden)
+  }
+
+  function deliverExport(blob: Blob, name: string, kind: DareExportKind, signal: AbortSignal) {
+    const file = createDareFile(blob, name, kind)
+    const label = kind === 'clip' ? 'Clip' : 'Damage report'
+    if (matchMedia('(any-pointer: coarse), (width < 640px)').matches && canShareDare(file)) {
+      setReady(previous => ({ ...previous, [kind]: file }))
+      announce(label + ' ready to share')
+    } else {
+      downloadDare(file, signal)
+      announce(label + ' downloaded')
+    }
+  }
+
+  async function shareExport(kind: DareExportKind) {
+    const file = ready[kind]
+    const signal = lifecycle.current?.signal
+    if (!file || !signal) return
+    const label = kind === 'clip' ? 'Clip' : 'Damage report'
+    try {
+      const result = await shareDare(file, signal)
+      if (signal.aborted || result === 'canceled') return
+      setReady(previous => previous[kind] === file ? { ...previous, [kind]: undefined } : previous)
+      announce(label + (result === 'shared' ? ' shared' : ' downloaded'))
+    } catch {
+      if (!signal.aborted) announce(label + ' could not be saved')
+    }
   }
 
   function announce(message: string) {
@@ -154,8 +189,7 @@ export default function App() {
       room.setCapturing(true)
       const blob = await recordDareClip(scene, track, setRecording, clip.signal)
       if (!signal.aborted && !clip.signal.aborted) {
-        downloadDare(blob, profile.name, 'clip', signal)
-        announce('Clip downloaded')
+        deliverExport(blob, profile.name, 'clip', signal)
       }
     } catch {
       if (!signal.aborted && !clip.signal.aborted) announce('Couldn’t record this clip in this browser')
@@ -186,8 +220,7 @@ export default function App() {
     try {
       const poster = await createScorecard(profile, stats)
       if (!signal.aborted) {
-        downloadDare(poster, profile.name, 'scorecard', signal)
-        announce('Damage report downloaded')
+        deliverExport(poster, profile.name, 'scorecard', signal)
       }
     } catch {
       if (!signal.aborted) announce('Couldn’t export the damage report')
@@ -222,8 +255,10 @@ export default function App() {
   }
 
   return (
-    <main className="playroom" data-hud-hidden={hudHidden}>
-      <canvas ref={canvas} className="studio" aria-label="Interactive ragdoll studio" aria-describedby="play-instructions" tabIndex={0} />
+    <main className="playroom" data-hud-hidden={hudHidden} data-export-status={recording !== null || Boolean(ready.clip || ready.scorecard)}>
+      <div className="stage-surface">
+        <canvas ref={canvas} className="studio" aria-label="Interactive ragdoll studio" aria-describedby="play-instructions" tabIndex={0} />
+      </div>
       <header className="studio-bar">
         <div className="brand">
           <span className="brand-mark"><Icon name="thread" size={23} /></span>
@@ -234,20 +269,21 @@ export default function App() {
           <div className="stat stat-friend" title={profile.name}><span className="dot" /> <strong>{profile.name}</strong></div>
           <div className="stat stat-mood" aria-label={'Mood: ' + hud.mood}><Icon name="mood" /><span>{hud.mood}</span></div>
           <div className={'stat stat-combo' + (hud.combo ? ' is-live' : '')} aria-label={'Combo: ' + hud.combo}>
-            <Icon name="bolt" size={17} /><strong>×{hud.combo}</strong>
+            <Icon name="bolt" size={17} /><strong>×<DisplayDigits value={hud.combo} /></strong>
             <span className="combo-track" aria-hidden="true" style={{ transform: 'scaleX(' + hud.comboTime + ')' }} />
           </div>
         </div>
         <div className="studio-actions">
-          <button ref={swap} className="control" onClick={() => { engine.current?.setPaused(true); setEditing(true) }}>
+          <button ref={swap} className="control" aria-label="Swap Face / Roasts" title="Swap Face / Roasts" onClick={() => { engine.current?.setPaused(true); setEditing(true) }}>
             <Icon name="portrait" /> <span>Swap Face <span className="extra-label">/ Roasts</span></span>
           </button>
-          <button className="control reset-btn" onClick={() => engine.current?.reset()} aria-keyshortcuts="R">
+          <button className="control reset-btn" aria-label="Reset Doll" title="Reset Doll" onClick={() => engine.current?.reset()} aria-keyshortcuts="R">
             <Icon name="reset" /> <span>Reset Doll</span><kbd>R</kbd>
           </button>
         </div>
       </header>
       <StudioExports muted={muted} recording={recording} canRecord={recordSupported} copying={copying} makingPoster={makingPoster}
+        readyClip={Boolean(ready.clip)} readyPoster={Boolean(ready.scorecard)} onShare={kind => { void shareExport(kind) }}
         onMute={() => {
           audio.current?.setMuted(!muted)
           setMuted(!muted)
@@ -266,14 +302,14 @@ export default function App() {
         }}
         onQuake={() => engine.current?.quake()} onClear={clearRoom} />
       <aside className="integrity" aria-label={'Integrity: ' + hud.integrity + '%'} data-low={hud.integrity < 30}>
-        <div><span>Stitch integrity</span><strong>{hud.integrity}%</strong></div>
+        <div><span>Stitch integrity</span><strong><DisplayDigits value={hud.integrity} />%</strong></div>
         <meter min={0} max={100} value={hud.integrity} aria-label="Stitch integrity" />
       </aside>
       {dareMode && <span className="dare-mode">Dare mode active</span>}
       <footer className="studio-footer">
-        <GadgetDock tool={tool} onSelect={selectTool} hud={hud} glove={glove} onToggleGlove={() => {
-          setGlove(!glove)
-          engine.current?.setGlovePrimary(!glove)
+        <GadgetDock tool={tool} onSelect={selectTool} hud={hud} glove={glove} onImpactMode={selected => {
+          setGlove(selected)
+          engine.current?.setGlovePrimary(selected)
         }} />
       </footer>
       {hudHidden && <button type="button" className="control show-hud" onClick={toggleHud} aria-keyshortcuts="H">Show HUD <kbd>H</kbd></button>}

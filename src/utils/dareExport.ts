@@ -2,9 +2,10 @@ import { ellipse, line } from '../engine/canvasDraw'
 import { OUTFITS } from '../engine/model'
 import type { DareStats, Profile } from '../engine/model'
 import { loadFaceImage } from './dareShare'
+import { DISPLAY_FONT, SPEECH_FONT, UI_FONT, gameFontsReady } from './gameFonts'
 
 const CLIP_MS = 5000
-const WEBM = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm']
+const CLIP_TYPES = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm', 'video/mp4']
 
 function fileName(name: string) {
   return name.normalize('NFC').replace(/\p{Script=Latin}+/gu, text =>
@@ -12,12 +13,44 @@ function fileName(name: string) {
     .replace(/[^\p{L}\p{N}\p{M}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 44) || 'buddy'
 }
 
-export function downloadDare(blob: Blob, name: string, kind: 'clip' | 'scorecard', signal: AbortSignal) {
+export type DareExportKind = 'clip' | 'scorecard'
+
+export function createDareFile(blob: Blob, name: string, kind: DareExportKind) {
+  const extension = kind === 'scorecard' ? 'png' : blob.type.startsWith('video/mp4') ? 'mp4' : 'webm'
+  const type = kind === 'scorecard' ? 'image/png' : 'video/' + extension
+  const suffix = kind === 'scorecard' ? '-damage-report' : ''
+  return new File([blob], 'buddy-dare-' + fileName(name) + suffix + '.' + extension, { type })
+}
+
+export function canShareDare(file: File) {
+  try {
+    return typeof navigator.share === 'function' && navigator.canShare?.({ files: [file] }) === true
+  } catch {
+    return false
+  }
+}
+
+export async function shareDare(file: File, signal: AbortSignal) {
+  if (signal.aborted) return 'canceled'
+  if (canShareDare(file)) {
+    try {
+      await navigator.share({ files: [file] })
+      return 'shared'
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return 'canceled'
+    }
+  }
+  if (signal.aborted) return 'canceled'
+  downloadDare(file, signal)
+  return 'downloaded'
+}
+
+export function downloadDare(file: File, signal: AbortSignal) {
   if (signal.aborted) return
   const link = document.createElement('a')
-  const url = URL.createObjectURL(blob)
+  const url = URL.createObjectURL(file)
   link.href = url
-  link.download = kind === 'clip' ? 'buddy-dare-' + fileName(name) + '.webm' : 'buddy-dare-' + fileName(name) + '-damage-report.png'
+  link.download = file.name
   document.body.append(link)
   const release = () => {
     URL.revokeObjectURL(url)
@@ -30,12 +63,12 @@ export function downloadDare(blob: Blob, name: string, kind: 'clip' | 'scorecard
   finally { link.remove() }
 }
 
-function webmTypes() {
+function recordingTypes() {
   if (typeof MediaRecorder === 'undefined' || typeof HTMLCanvasElement.prototype.captureStream !== 'function') return []
-  return WEBM.filter(type => MediaRecorder.isTypeSupported(type))
+  return CLIP_TYPES.filter(type => MediaRecorder.isTypeSupported(type))
 }
 
-export function canRecordClip() { return webmTypes().length > 0 }
+export function canRecordClip() { return recordingTypes().length > 0 }
 
 export function recordDareClip(
   canvas: HTMLCanvasElement,
@@ -44,13 +77,14 @@ export function recordDareClip(
   signal: AbortSignal,
 ) {
   return new Promise<Blob>((resolve, reject) => {
-    const types = webmTypes()
-    if (!types.length) { reject(new Error('WebM recording is unavailable')); return }
+    const types = recordingTypes()
+    if (!types.length) { reject(new Error('Video recording is unavailable')); return }
     if (signal.aborted) { reject(signal.reason); return }
 
     const tracks: MediaStreamTrack[] = []
     const chunks: Blob[] = []
     let recorder: MediaRecorder | undefined
+    let selectedType = ''
     let timer: number | undefined
     let countdown: number | undefined
     let finished = false
@@ -68,7 +102,7 @@ export function recordDareClip(
       cleanup()
       if (error !== undefined) reject(error)
       else {
-        const blob = new Blob(chunks, { type: recorder?.mimeType || 'video/webm' })
+        const blob = new Blob(chunks, { type: recorder?.mimeType || selectedType })
         if (blob.size) resolve(blob)
         else reject(new Error('The recording did not contain frames'))
       }
@@ -89,12 +123,13 @@ export function recordDareClip(
           const candidate = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 1800000, audioBitsPerSecond: 96000 })
           candidate.start()
           recorder = candidate
+          selectedType = mimeType
           break
         } catch {
           // A browser can advertise a codec that fails to open for this stream.
         }
       }
-      if (!recorder) throw new Error('A WebM encoder could not start')
+      if (!recorder) throw new Error('A video encoder could not start')
       const capture = recorder
       capture.ondataavailable = event => { if (event.data.size) chunks.push(event.data) }
       capture.onstop = () => finish()
@@ -123,6 +158,30 @@ function headline(ctx: Pen, text: string, x: number, y: number, width: number, s
     ctx.font = font.replace('{size}', String(--size))
   }
   ctx.fillText(text, x, y, width)
+}
+
+function metric(ctx: Pen, text: string, x: number, y: number, maxWidth: number) {
+  // Canvas does not expose tabular figures, and Fredoka has proportional numerals.
+  const characters = [...text]
+  const digits = /\p{Decimal_Number}/u
+  const measure = (size: number) => {
+    ctx.font = '700 ' + size + 'px ' + DISPLAY_FONT
+    const cell = Math.max(...[...'0123456789', ...characters.filter(char => digits.test(char))]
+      .map(char => ctx.measureText(char).width))
+    const advances = characters.map(char => digits.test(char) ? cell : ctx.measureText(char).width)
+    return { advances, width: advances.reduce((total, advance) => total + advance, 0) }
+  }
+  const initial = measure(37)
+  const figures = initial.width > maxWidth ? measure(Math.max(18, Math.floor(37 * maxWidth / initial.width))) : initial
+  ctx.save()
+  ctx.translate(x, y)
+  ctx.scale(Math.min(1, maxWidth / figures.width), 1)
+  let cursor = -figures.width / 2
+  for (const [i, advance] of figures.advances.entries()) {
+    ctx.fillText(characters[i] ?? '', cursor + advance / 2, 0)
+    cursor += advance
+  }
+  ctx.restore()
 }
 
 function wrap(ctx: Pen, message: string, width: number) {
@@ -200,6 +259,7 @@ async function portrait(ctx: Pen, profile: Profile, x: number, y: number, radius
 }
 
 export async function createScorecard(profile: Profile, stats: DareStats) {
+  await gameFontsReady(profile.name, stats.roast)
   const width = 720
   const height = 920
   const canvas = document.createElement('canvas')
@@ -231,17 +291,17 @@ export async function createScorecard(profile: Profile, stats: DareStats) {
   ctx.fillRect(60, 55, 600, 43)
   ctx.textAlign = 'center'
   ctx.fillStyle = '#fff0d1'
-  ctx.font = 'bold 15px monospace'
+  ctx.font = '700 15px ' + UI_FONT
   ctx.fillText('J U T E   R O O M', 360, 82)
   ctx.fillStyle = INK
-  ctx.font = 'bold 56px Georgia, serif'
+  ctx.font = '700 56px ' + DISPLAY_FONT
   ctx.fillText('Official Dare', 360, 163)
-  ctx.font = 'bold 53px Georgia, serif'
+  ctx.font = '700 53px ' + DISPLAY_FONT
   ctx.fillText('Damage Report', 360, 217)
   line(ctx, 103, 242, 617, 242, MUTED, 1)
   await portrait(ctx, profile, 360, 371, 91)
   ctx.fillStyle = INK
-  headline(ctx, profile.name, 360, 519, 580, 45, 'bold {size}px Georgia, serif')
+  headline(ctx, profile.name, 360, 519, 580, 45, '700 {size}px ' + DISPLAY_FONT)
 
   const metrics = [
     { label: 'TOTAL DAMAGE DEALT', value: stats.damage.toLocaleString() + ' pts' },
@@ -258,22 +318,22 @@ export async function createScorecard(profile: Profile, stats: DareStats) {
     const x = start + cells * (i + 0.5)
     if (i) line(ctx, start + cells * i, 568, start + cells * i, 641, '#a8906d')
     ctx.fillStyle = MUTED
-    ctx.font = 'bold 12px monospace'
+    ctx.font = '700 12px ' + UI_FONT
     ctx.fillText(label, x, 583)
     ctx.fillStyle = INK
-    headline(ctx, value, x, 626, 182, 37, 'bold {size}px Georgia, serif')
+    metric(ctx, value, x, 626, 182)
   })
 
   ctx.fillStyle = MUTED
-  ctx.font = 'bold 13px monospace'
+  ctx.font = '700 13px ' + UI_FONT
   ctx.fillText('ROAST OF THE ROUND', 360, 691)
   ctx.fillStyle = INK
   const quoted = stats.roast ? '“' + stats.roast + '”' : 'No roast triggered yet'
   let roastSize = 27
-  ctx.font = 'italic ' + roastSize + 'px Georgia, serif'
+  ctx.font = '400 ' + roastSize + 'px ' + SPEECH_FONT
   let rows = wrap(ctx, quoted, 517)
   while (rows.length > 3 && roastSize > 12) {
-    ctx.font = 'italic ' + --roastSize + 'px Georgia, serif'
+    ctx.font = '400 ' + --roastSize + 'px ' + SPEECH_FONT
     rows = wrap(ctx, quoted, 517)
   }
   rows.forEach((row, i) => ctx.fillText(row, 360, 726 + i * Math.min(30, 66 / Math.max(1, rows.length - 1)), 517))
@@ -288,7 +348,7 @@ export async function createScorecard(profile: Profile, stats: DareStats) {
   ctx.strokeRect(-143, -22, 286, 52)
   ctx.lineWidth = 1
   ctx.strokeRect(-138, -17, 276, 42)
-  ctx.font = 'bold 29px monospace'
+  ctx.font = '700 29px ' + DISPLAY_FONT
   ctx.fillText(stats.destroyed ? 'DESTROYED' : 'SURVIVED', 0, 15)
   ctx.restore()
 
