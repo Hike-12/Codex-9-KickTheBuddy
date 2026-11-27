@@ -43,6 +43,28 @@
   overflow: clip;
 }
 
+:is(.face-modal, .field textarea, .choice-menu, .controls-popover, .export-options, .gadget-dock, .room-modifiers) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-brass) var(--color-workshop);
+}
+
+@supports not (scrollbar-color: auto) {
+  @media (forced-colors: none) {
+    :is(.face-modal, .field textarea, .choice-menu, .controls-popover, .export-options, .gadget-dock, .room-modifiers)::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    :is(.face-modal, .field textarea, .choice-menu, .controls-popover, .export-options, .gadget-dock, .room-modifiers)::-webkit-scrollbar-track {
+      background: var(--color-workshop);
+    }
+    :is(.face-modal, .field textarea, .choice-menu, .controls-popover, .export-options, .gadget-dock, .room-modifiers)::-webkit-scrollbar-thumb {
+      background: var(--color-brass);
+      border: 2px solid var(--color-workshop);
+      border-radius: 4px;
+    }
+  }
+}
+
 .stage-surface {
   position: absolute;
   inset: 0;
@@ -511,7 +533,6 @@ kbd { font-family: var(--font-ui); }
     width: 100%;
     overflow-x: auto;
     overflow-y: hidden;
-    scrollbar-width: none;
     scroll-snap-type: x proximity;
     overscroll-behavior-inline: contain;
     touch-action: pan-x;
@@ -654,7 +675,6 @@ kbd { font-family: var(--font-ui); }
     width: auto;
     overflow-x: auto;
     overflow-y: hidden;
-    scrollbar-width: none;
     scroll-snap-type: x proximity;
     overscroll-behavior-inline: contain;
     touch-action: pan-x;
