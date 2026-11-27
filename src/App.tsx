@@ -12,7 +12,7 @@ import type { GravityMode, Tool } from './engine/gadgetModel'
 import { DEFAULT_HARDNESS, DEFAULT_PROFILE, HARDNESS, INITIAL_HUD, profileFrom } from './engine/model'
 import type { Hardness, Profile } from './engine/model'
 import { canRecordClip, canShareDare, createClipFile, downloadDare, recordDareClip, shareDare } from './utils/dareExport'
-import { copyDareLink, readDare } from './utils/dareShare'
+import { copyDareLink, isDareHash, readDare } from './utils/dareShare'
 
 const PROFILE_KEY = 'jute-room:friend:v1'
 const HARDNESS_MENU = 'buddy-hardness'
@@ -34,7 +34,7 @@ function readProfile(): Profile {
 }
 
 export default function App() {
-  const [profile, setProfile] = useState(() => window.location.hash.startsWith('#dare=') ? DEFAULT_PROFILE : readProfile())
+  const [profile, setProfile] = useState(() => isDareHash(window.location.hash) ? DEFAULT_PROFILE : readProfile())
   const initialProfile = useRef(profile)
   const [hud, setHud] = useState(INITIAL_HUD)
   const [hardness, setHardness] = useState<Hardness>(DEFAULT_HARDNESS)
@@ -80,14 +80,14 @@ export default function App() {
     const hydrate = async () => {
       const id = ++current
       const hash = window.location.hash
-      const dare = await readDare(hash)
+      const dare = await readDare(hash, signal)
       if (signal.aborted || id !== current) return
-      const next = dare ?? (hash.startsWith('#dare=') ? DEFAULT_PROFILE : readProfile())
+      const next = dare ?? (isDareHash(hash) ? DEFAULT_PROFILE : readProfile())
       setDareMode(Boolean(dare))
       setProfile(next)
       room.setProfile(next)
     }
-    if (window.location.hash.startsWith('#dare=')) void hydrate()
+    if (isDareHash(window.location.hash)) void hydrate()
     window.addEventListener('hashchange', () => { void hydrate() }, { signal })
     return () => {
       life.abort()
@@ -162,10 +162,10 @@ export default function App() {
     if (!signal || copying) return
     setCopying(true)
     try {
-      const { photoOmitted } = await copyDareLink(profile)
-      if (!signal.aborted) announce(photoOmitted ? 'Dare link copied without the photo' : 'Dare link copied')
+      await copyDareLink(profile)
+      if (!signal.aborted) announce('Dare link copied')
     } catch {
-      if (!signal.aborted) announce('Clipboard unavailable. Try again in a secure browser tab.')
+      if (!signal.aborted) announce('Couldn?t copy the dare link. Try again.')
     } finally {
       if (!signal.aborted) setCopying(false)
     }
