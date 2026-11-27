@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { FaceCropModal } from './components/FaceCropModal'
+import { GadgetDock } from './components/GadgetDock'
 import { Icon } from './components/Icon'
+import { RoomModifiersBar } from './components/RoomModifiersBar'
 import { RagdollEngine } from './engine/RagdollEngine'
+import { TOOLS } from './engine/gadgetModel'
+import type { GravityMode, Tool } from './engine/gadgetModel'
 import { DEFAULT_PROFILE, INITIAL_HUD } from './engine/model'
 import type { Profile } from './engine/model'
 
@@ -31,6 +35,10 @@ export default function App() {
   const initialProfile = useRef(profile)
   const [hud, setHud] = useState(INITIAL_HUD)
   const [editing, setEditing] = useState(false)
+  const [tool, setTool] = useState<Tool>('grab')
+  const [glove, setGlove] = useState(false)
+  const [gravity, setGravity] = useState<GravityMode>('normal')
+  const [bumpers, setBumpers] = useState(false)
   const canvas = useRef<HTMLCanvasElement>(null)
   const coin = useRef<HTMLDivElement>(null)
   const engine = useRef<RagdollEngine | null>(null)
@@ -48,13 +56,28 @@ export default function App() {
 
   useEffect(() => {
     function keydown(event: KeyboardEvent) {
-      if (event.key.toLowerCase() === 'r' && !editing && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        engine.current?.reset()
-      }
+      if (editing || event.repeat || event.metaKey || event.ctrlKey || event.altKey ||
+        (event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable]'))) return
+      const key = event.key.toLowerCase()
+      if (key === 'r') engine.current?.reset()
+      if (key === 'c') clearRoom()
+      const selected = /^[1-8]$/.test(key) ? TOOLS[Number(key) - 1] : undefined
+      if (selected) selectTool(selected)
     }
     window.addEventListener('keydown', keydown)
     return () => window.removeEventListener('keydown', keydown)
   }, [editing])
+
+  function selectTool(next: Tool) {
+    setTool(next)
+    engine.current?.setTool(next)
+  }
+
+  function clearRoom() {
+    setGravity('normal')
+    setBumpers(false)
+    engine.current?.clearRoom()
+  }
 
   function closeCustomizer() {
     engine.current?.setPaused(false)
@@ -95,19 +118,26 @@ export default function App() {
           </button>
         </div>
       </header>
+      <RoomModifiersBar gravity={gravity} bumpers={bumpers} quake={hud.quake}
+        onGravity={() => {
+          const next = gravity === 'normal' ? 'moon' : gravity === 'moon' ? 'zero' : 'normal'
+          setGravity(next)
+          engine.current?.setGravity(next)
+        }}
+        onBumpers={() => {
+          setBumpers(!bumpers)
+          engine.current?.setBumpers(!bumpers)
+        }}
+        onQuake={() => engine.current?.quake()} onClear={clearRoom} />
       <aside className="integrity" aria-label={'Integrity: ' + hud.integrity + '%'} data-low={hud.integrity < 30}>
         <div><span>Stitch integrity</span><strong>{hud.integrity}%</strong></div>
         <meter min={0} max={100} value={hud.integrity} aria-label="Stitch integrity" />
       </aside>
       <footer className="studio-footer">
-        <div className="play-hints" id="play-instructions">
-          <span><Icon name="hand" size={16} /> Drag to fling</span>
-          <span className="pet-hint"><Icon name="heart" size={16} /> Hover to pet</span>
-        </div>
-        <div className="tools-dock" aria-label="Tool dock">
-          <span className="tool-current"><Icon name="hand" size={18} /> Hands</span>
-          <span className="tool-locked"><Icon name="lock" size={15} /> Gadget shelf</span>
-        </div>
+        <GadgetDock tool={tool} onSelect={selectTool} hud={hud} glove={glove} onToggleGlove={() => {
+          setGlove(!glove)
+          engine.current?.setGlovePrimary(!glove)
+        }} />
       </footer>
       {editing && <FaceCropModal profile={profile} onClose={closeCustomizer} onSave={saveProfile} />}
     </main>

@@ -1,15 +1,14 @@
 import Matter from 'matter-js'
 import type { Body as RigidBody, Composite as MatterComposite, Constraint as Pin, IEventCollision, Mouse as MatterMouse, Vector } from 'matter-js'
 import { GameDirector } from './GameDirector'
+import { GadgetSystem } from './GadgetSystem'
 import { RagdollRenderer } from './RagdollRenderer'
+import { DOLL_LAYER as DOLL, FIXTURE_LAYER, MOVING_LAYERS, PROP_LAYER, ROOM_LAYER as ROOM, STEP } from './gadgetModel'
+import type { GravityMode, Tool } from './gadgetModel'
 import { clamp, localPoint } from './model'
 import type { Hud, Limb, Profile, Room, Surface } from './model'
 
 const { Bodies, Body, Composite, Constraint, Engine, Events, MouseConstraint, Query, Sleeping, Vector: Vec } = Matter
-const STEP = 1000 / 60
-const DOLL = 0x0002
-const ROOM = 0x0004
-
 const PARTS = {
   head: [0, 0, 111, 101, 39, 'head'],
   torso: [0, 99, 86, 90, 23, 'denim'],
@@ -52,6 +51,7 @@ export class RagdollEngine {
   private wallDirection = new Map<number, Vector>()
   private renderer: RagdollRenderer
   private director: GameDirector
+  private gadgets: GadgetSystem
   private mouse: MatterMouse & { sourceEvents: { mousemove: null; mousedown: null; mouseup: null; mousewheel: null } }
   private grabConstraint: Matter.MouseConstraint
   private observer: ResizeObserver
@@ -62,6 +62,7 @@ export class RagdollEngine {
   private cssScale = 1
   private tokenTarget: Vector = { x: 90, y: 33 }
   private pointer: Pointer | null = null
+  private gadgetPointer: number | null = null
   private hover: { point: Vector; time: number } | null = null
   private frame = 0
   private previousTime = 0
@@ -69,10 +70,27 @@ export class RagdollEngine {
   private lastHud = -100
   private lastSnapshot: Hud | null = null
   private paused = false
+  private glovePrimary = false
 
   constructor(private canvas: HTMLCanvasElement, private coinLabel: HTMLElement, profile: Profile, private onHud: (hud: Hud) => void) {
     this.renderer = new RagdollRenderer(canvas)
     this.director = new GameDirector(profile)
+    this.gadgets = new GadgetSystem(this.engine, this.director, {
+      limbs: () => this.doll?.limbs ?? [],
+      torso: () => this.doll?.limbs.find(limb => limb.surface === 'denim'),
+      wake: () => this.unhang(),
+      setSolid: solid => {
+        const doll = this.doll
+        if (!doll) return
+        if (solid) {
+          this.releaseGrab()
+          Composite.remove(this.engine.world, doll.composite)
+        } else {
+          this.releaseGrab()
+          if (!this.engine.world.composites.includes(doll.composite)) Composite.add(this.engine.world, doll.composite)
+        }
+      },
+    })
     this.renderer.setProfile(profile)
     Composite.add(this.engine.world, this.walls)
     // A PointerEvents adapter drives Matter's spring without its parallel mouse/touch listeners.
@@ -84,7 +102,7 @@ export class RagdollEngine {
     this.grabConstraint = MouseConstraint.create(this.engine, {
       mouse: this.mouse,
       constraint: { stiffness: 0.27, damping: 0.14 },
-      collisionFilter: { category: ROOM, mask: DOLL, group: 0 },
+      collisionFilter: { category: ROOM, mask: MOVING_LAYERS, group: 0 },
     })
     Composite.add(this.engine.world, this.grabConstraint)
     Events.on(this.engine, 'collisionStart', this.onCollision)
@@ -95,6 +113,7 @@ export class RagdollEngine {
     canvas.addEventListener('pointercancel', this.onCancel, { signal })
     canvas.addEventListener('lostpointercapture', this.onCancel, { signal })
     canvas.addEventListener('pointerleave', this.onLeave, { signal })
+    canvas.addEventListener('contextmenu', this.onContextMenu, { signal })
     document.addEventListener('visibilitychange', this.onVisibility, { signal })
     this.observer = new ResizeObserver(this.resize)
     this.observer.observe(canvas)
@@ -114,6 +133,27 @@ export class RagdollEngine {
     if (paused) this.release()
   }
 
+  setTool(tool: Tool) {
+    if (this.gadgets.tool === tool) return
+    this.release()
+    this.gadgets.setTool(tool)
+    this.canvas.dataset.tool = tool
+    this.canvas.dataset.hover = 'false'
+    this.hover = null
+  }
+
+  setGravity(mode: GravityMode) { this.gadgets.setGravity(mode) }
+  setBumpers(enabled: boolean) { this.gadgets.setBumpers(enabled) }
+  setGlovePrimary(enabled: boolean) { this.glovePrimary = enabled }
+  quake() { this.gadgets.quake() }
+
+  clearRoom() {
+    this.release()
+    this.gadgets.clear()
+    this.gadgets.update(0)
+    this.publishHud(true)
+  }
+
   reset() {
     this.release()
     this.director.reset(true)
@@ -127,6 +167,7 @@ export class RagdollEngine {
     this.events.abort()
     this.observer.disconnect()
     Events.off(this.engine, 'beforeUpdate collisionStart')
+    this.gadgets.clear()
     Composite.clear(this.engine.world, false, true)
     Engine.clear(this.engine)
     this.renderer.dispose()
@@ -141,16 +182,17 @@ export class RagdollEngine {
     const height = rect.height / this.cssScale
     const old = this.room
     const gutter = Math.min(width * 0.087, 102)
-    const topClearance = rect.width <= 760 ? Math.min(106 / this.cssScale, height * 0.28) : 0
-    this.room = { width, height, left: gutter, right: width - gutter, ceiling: Math.max(height * 0.103, topClearance), floor: height * 0.835 }
+    const topClearance = Math.min((rect.width <= 760 ? 154 : 115) / this.cssScale, height * 0.28)
+    const floorRatio = rect.width <= 510 && rect.height < 670 ? 0.79 : 0.835
+    this.room = { width, height, left: gutter, right: width - gutter, ceiling: Math.max(height * 0.103, topClearance), floor: height * floorRatio }
     const { left, right, floor, ceiling } = this.room
     this.renderer.resize(this.room, this.cssScale, Math.min(devicePixelRatio || 1, 2))
     const coin = this.coinLabel.getBoundingClientRect()
     this.tokenTarget = { x: (coin.left + coin.width / 2 - rect.left) / this.cssScale, y: (coin.top + coin.height / 2 - rect.top) / this.cssScale }
-    if (width === old.width && height === old.height && ceiling === old.ceiling) return
+    if (width === old.width && height === old.height && ceiling === old.ceiling && floor === old.floor) return
 
     const hip = this.doll?.head.body.position
-    if (hip) {
+    if (hip && !this.gadgets.ice) {
       const dx = clamp(hip.x / old.width * width, left + 76, right - 76) - hip.x
       const dy = floor - old.floor
       const minY = Math.min(...(this.doll?.limbs.map(limb => limb.body.bounds.min.y) ?? [ceiling]))
@@ -173,9 +215,11 @@ export class RagdollEngine {
     const thickness = 200
     const wall = (x: number, y: number, w: number, h: number, direction: Vector) => {
       const body = Bodies.rectangle(x, y, w, h, {
-        isStatic: true, restitution: 0.57, friction: 0.24,
-        collisionFilter: { category: ROOM, mask: DOLL },
+        isStatic: true,
+        collisionFilter: { category: ROOM, mask: MOVING_LAYERS },
       })
+      body.restitution = 0.57
+      body.friction = 0.24
       this.wallDirection.set(body.id, direction)
       Composite.add(this.walls, body)
     }
@@ -183,22 +227,23 @@ export class RagdollEngine {
     wall(right + thickness / 2, height / 2, thickness, height + thickness, { x: -1, y: 0 })
     wall(width / 2, ceiling - thickness / 2, width + thickness, thickness, { x: 0, y: 1 })
     wall(width / 2, floor + thickness / 2, width + thickness, thickness, { x: 0, y: -1 })
+    this.gadgets.resize(this.room)
   }
 
   private spawn(hang: boolean) {
     this.removeDoll()
     const composite = Composite.create({ label: 'Jute ragdoll' })
     const center = this.room.width * 0.5
-    const y = hang ? this.room.floor - 301 : this.room.ceiling + 68
+    const y = hang ? this.room.floor - 301 : Math.min(this.room.ceiling + 68, this.room.floor - 274)
     const group = Body.nextGroup(true)
     const makeLimb = (key: Part): Limb => {
       const [x, dy, width, height, radius, surface] = PARTS[key]
       const body = Bodies.rectangle(center + x, y + dy, width, height, {
         label: key, chamfer: { radius: radius * 0.72 }, density: surface === 'head' ? 0.00115 : 0.0016,
         restitution: 0.52, friction: 0.29, frictionAir: 0.014,
-        collisionFilter: { group, category: DOLL, mask: ROOM },
+        collisionFilter: { group, category: DOLL, mask: ROOM | PROP_LAYER | FIXTURE_LAYER },
       })
-      const limb = { body, width, height, radius, surface, marks: [] }
+      const limb = { body, width, height, radius, surface, marks: [], decals: [] }
       this.limbByBody.set(body.id, limb)
       Composite.add(composite, body)
       return limb
@@ -230,6 +275,7 @@ export class RagdollEngine {
 
   private removeDoll() {
     if (!this.doll) return
+    this.gadgets.resetDoll()
     Composite.remove(this.engine.world, this.doll.composite)
     this.limbByBody.clear()
     this.doll = null
@@ -237,6 +283,7 @@ export class RagdollEngine {
 
   private hit(point: Vector) {
     if (!this.doll) return undefined
+    if (this.gadgets.ice) return Query.point([this.gadgets.ice.body], point)[0]
     for (let i = this.doll.limbs.length - 1; i >= 0; i--) {
       const body = this.doll.limbs[i]?.body
       if (body && Query.point([body], point).length) return body
@@ -250,17 +297,22 @@ export class RagdollEngine {
   }
 
   private onDown = (event: PointerEvent) => {
-    if (event.button !== 0 || this.pointer || this.paused) return
+    if (this.pointer || this.gadgetPointer !== null || this.paused || !event.isPrimary) return
     const point = this.pointerPoint(event)
+    if (this.gadgets.tool !== 'grab') {
+      if (event.button !== 0 && !(event.button === 2 && this.gadgets.tool === 'impact')) return
+      this.gadgetPointer = event.pointerId
+      this.canvas.setPointerCapture(event.pointerId)
+      this.gadgets.press(point, this.glovePrimary || event.shiftKey || event.button === 2)
+      return
+    }
+    if (event.button !== 0) return
     const body = this.hit(point)
     if (!body || !this.doll) return
     this.pointer = { id: event.pointerId, point, velocity: zero(), time: event.timeStamp }
     this.canvas.setPointerCapture(event.pointerId)
     this.canvas.dataset.grabbing = 'true'
-    if (this.doll.suspension) {
-      Composite.remove(this.doll.composite, this.doll.suspension)
-      this.doll.suspension = null
-    }
+    this.unhang()
     Object.assign(this.mouse.position, point)
     this.mouse.button = 0
     const spring = this.grabConstraint.constraint
@@ -272,7 +324,12 @@ export class RagdollEngine {
   }
 
   private onMove = (event: PointerEvent) => {
+    if (!event.isPrimary || this.paused) return
     const point = this.pointerPoint(event)
+    if (this.gadgets.tool !== 'grab') {
+      this.gadgets.move(point)
+      return
+    }
     if (this.pointer?.id === event.pointerId) {
       const { left, right, floor, ceiling } = this.room
       const p = this.pointer
@@ -292,13 +349,17 @@ export class RagdollEngine {
     this.canvas.dataset.hover = body ? 'true' : 'false'
     const previous = this.hover
     this.hover = { point, time: event.timeStamp }
-    if (body && previous) {
+    if (body && previous && !this.gadgets.ice) {
       const distance = Math.hypot(point.x - previous.point.x, point.y - previous.point.y)
       if (distance >= 0.8 && distance / Math.max(5, event.timeStamp - previous.time) < 1.24) this.director.pet(point)
     }
   }
 
   private onUp = (event: PointerEvent) => {
+    if (this.gadgetPointer === event.pointerId) {
+      this.stopGadget(true)
+      return
+    }
     const pointer = this.pointer
     if (!pointer || pointer.id !== event.pointerId) return
     const body = this.grabConstraint.constraint.bodyB
@@ -310,19 +371,43 @@ export class RagdollEngine {
         Body.setVelocity(body, { x: clamp(old.x * 0.66 + impetus.x, -49, 49), y: clamp(old.y * 0.66 + impetus.y, -49, 49) })
       }
     }
-    this.release()
+    this.releaseGrab()
   }
 
   private onCancel = (event: PointerEvent) => {
-    if (this.pointer?.id === event.pointerId) this.release()
+    if (this.pointer?.id === event.pointerId) this.releaseGrab()
+    if (this.gadgetPointer === event.pointerId) this.stopGadget(false)
   }
 
   private onLeave = () => {
     this.hover = null
     this.canvas.dataset.hover = 'false'
+    if (this.gadgetPointer === null) this.gadgets.move(null)
+  }
+
+  private onContextMenu = (event: MouseEvent) => {
+    if (this.gadgets.tool === 'impact') event.preventDefault()
   }
 
   private release() {
+    this.releaseGrab()
+    this.stopGadget(false)
+  }
+
+  private stopGadget(detonate: boolean) {
+    const id = this.gadgetPointer
+    this.gadgetPointer = null
+    this.gadgets.release(detonate)
+    if (id !== null && this.canvas.hasPointerCapture(id)) this.canvas.releasePointerCapture(id)
+  }
+
+  private unhang() {
+    if (!this.doll?.suspension) return
+    Composite.remove(this.doll.composite, this.doll.suspension)
+    this.doll.suspension = null
+  }
+
+  private releaseGrab() {
     const id = this.pointer?.id
     this.pointer = null
     this.mouse.button = -1
@@ -336,6 +421,7 @@ export class RagdollEngine {
     for (const pair of event.pairs) {
       const limb = this.limbByBody.get(pair.bodyA.id) ?? this.limbByBody.get(pair.bodyB.id)
       const direction = this.wallDirection.get(pair.bodyA.id) ?? this.wallDirection.get(pair.bodyB.id)
+      this.gadgets.collision(pair, limb, direction)
       if (!limb || !direction) continue
       const speed = -Vec.dot(limb.body.velocity, direction)
       if (speed <= (strongest?.speed ?? 0)) continue
@@ -357,7 +443,8 @@ export class RagdollEngine {
 
   private step() {
     if (this.director.now < this.director.freezeUntil) return
-    for (const { a, b, limit, spring } of this.doll?.joints ?? []) {
+    this.gadgets.beforeStep()
+    for (const { a, b, limit, spring } of this.gadgets.ice ? [] : this.doll?.joints ?? []) {
       const angle = b.angle - a.angle
       const error = Math.atan2(Math.sin(angle), Math.cos(angle))
       const extra = error - clamp(error, -limit, limit)
@@ -366,6 +453,7 @@ export class RagdollEngine {
       Body.setAngularVelocity(a, a.angularVelocity + correction * 0.29)
     }
     Engine.update(this.engine, STEP)
+    this.gadgets.afterStep()
     if (this.director.hud.integrity <= 0 && this.doll) {
       this.director.pop(this.doll.head.body.position)
       this.release()
@@ -379,7 +467,8 @@ export class RagdollEngine {
     const hud = this.director.hud
     const last = this.lastSnapshot
     if (!force && last && hud.coins === last.coins && hud.integrity === last.integrity &&
-      hud.combo === last.combo && hud.mood === last.mood && hud.comboTime === last.comboTime) return
+      hud.combo === last.combo && hud.mood === last.mood && hud.comboTime === last.comboTime &&
+      hud.freezeProgress === last.freezeProgress && hud.frozen === last.frozen && hud.quake === last.quake) return
     this.lastSnapshot = { ...hud }
     this.onHud(this.lastSnapshot)
   }
@@ -389,6 +478,7 @@ export class RagdollEngine {
     this.previousTime = time
     if (!this.paused) {
       this.director.advance(dt, this.room, this.tokenTarget)
+      this.gadgets.update(dt)
       if (this.director.respawnAt && this.director.now >= this.director.respawnAt) {
         this.director.reset(false)
         this.spawn(false)
@@ -405,7 +495,7 @@ export class RagdollEngine {
       ? { from: this.mouse.position, to: Vec.add(spring.bodyB.position, spring.pointB) }
       : null
     this.renderer.draw(this.room, this.doll?.limbs ?? [], this.doll?.head ?? null,
-      this.director, drag, Boolean(this.doll?.suspension), this.reducedMotion.matches)
+      this.director, drag, Boolean(this.doll?.suspension), this.reducedMotion.matches, this.gadgets)
     this.frame = requestAnimationFrame(this.tick)
   }
 

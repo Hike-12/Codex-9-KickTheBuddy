@@ -34,6 +34,7 @@ export class GameDirector {
   private lastAction = 0
   private lastImpact = -1000
   private lineIndex = 0
+  private holdCoinsUntil = 0
 
   constructor(private profile: Profile) {}
 
@@ -66,7 +67,7 @@ export class GameDirector {
     }
   }
 
-  impact(point: Vector, speed: number, direction: Vector) {
+  impact(point: Vector, speed: number, direction: Vector, damageScale = 1) {
     if (speed < 4 || this.now - this.lastImpact < 100 || this.respawnAt) return false
     this.lastImpact = this.now
     this.lastAction = this.now
@@ -74,7 +75,7 @@ export class GameDirector {
     const critical = speed >= 23
     this.hud.combo = this.now < this.comboUntil ? this.hud.combo + 1 : 1
     this.comboUntil = this.now + COMBO_MS
-    const damage = Math.round(clamp(speed * 1.25 - 2, 2, 41))
+    const damage = Math.round(clamp(speed * 1.25 - 2, 2, 41) * damageScale)
     this.hud.integrity = Math.max(0, this.hud.integrity - damage)
     this.hud.mood = critical ? 'Dizzy' : 'Rattled'
     this.expression = {
@@ -99,6 +100,26 @@ export class GameDirector {
       this.speak(this.hud.combo >= 3 ? 'combo' : 'slam')
     }
     return heavy
+  }
+
+  bonus(point: Vector, value: number, label: string) {
+    this.coins(point, value, 3)
+    this.callouts.push({ text: label + ' +$' + value, x: point.x, y: point.y - 20, age: 0, accent: true })
+  }
+
+  rattle(direction: Vector, strength: number) {
+    this.shake = { ...direction, until: this.now + 230, strength }
+  }
+
+  affectCoins(field: (point: Vector, vx: number, vy: number) => Vector) {
+    this.holdCoinsUntil = this.now + 220
+    for (const coin of this.particles) {
+      if (coin.kind !== 'coin') continue
+      const velocity = field(coin, coin.vx, coin.vy)
+      coin.vx = velocity.x
+      coin.vy = velocity.y
+      coin.life = Math.max(coin.life, coin.age + 730)
+    }
   }
 
   pop(point: Vector) {
@@ -145,7 +166,7 @@ export class GameDirector {
       const p = this.particles[i]
       if (!p) continue
       p.age += dt
-      if (p.kind === 'coin' && p.age > 530) {
+      if (p.kind === 'coin' && p.age > 530 && this.now >= this.holdCoinsUntil) {
         const ease = 1 - Math.exp(-dt / 115)
         p.x += (target.x - p.x) * ease
         p.y += (target.y - p.y) * ease
@@ -162,6 +183,10 @@ export class GameDirector {
         if (p.kind === 'coin' && (p.x < room.left || p.x > room.right)) {
           p.x = clamp(p.x, room.left, room.right)
           p.vx *= -0.65
+        }
+        if (p.kind === 'coin' && p.y < room.ceiling && p.vy < 0) {
+          p.y = room.ceiling
+          p.vy *= -0.55
         }
       }
       if (p.age >= p.life) {
