@@ -112,7 +112,7 @@ export class RagdollRenderer {
     this.outfit = profile.outfit
     const request = ++this.faceRequest
     this.textReady = false
-    void gameFontsReady(profile.name, profile.roasts.join(' ')).then(() => {
+    void gameFontsReady(profile.roasts.join(' ')).then(() => {
       if (request === this.faceRequest) this.textReady = true
     })
     if (!profile.face) {
@@ -434,14 +434,8 @@ export class RagdollRenderer {
     for (const p of game.particles) {
       ctx.save()
       ctx.translate(p.x, p.y)
-      ctx.globalAlpha = p.kind === 'coin' ? 1 : Math.min(1, (1 - p.age / p.life) * 2.4)
-      if (p.kind === 'coin') {
-        const width = p.size * (0.2 + Math.abs(Math.cos(p.spin + p.age / 61)) * 0.8)
-        ellipse(ctx, 1, 1, width + 1, p.size + 1, '#74421e')
-        ellipse(ctx, 0, 0, width, p.size, '#f6c95e')
-        ellipse(ctx, 0, 0, Math.max(0.8, width * 0.52), p.size * 0.64, '#cf8d2e')
-        line(ctx, 0, -p.size * 0.45, 0, p.size * 0.47, '#fff0a5', 1.2)
-      } else if (p.kind === 'heart') {
+      ctx.globalAlpha = Math.min(1, (1 - p.age / p.life) * 2.4)
+      if (p.kind === 'heart') {
         ctx.scale(p.size / 7, p.size / 7)
         ctx.beginPath()
         ctx.moveTo(0, 5)
@@ -473,20 +467,20 @@ export class RagdollRenderer {
     for (const callout of game.callouts) {
       ctx.save()
       ctx.translate(clamp(callout.x, room.left + 88, room.right - 88), clamp(callout.y - callout.age * 0.046, room.ceiling + 22, room.floor - 16))
-      ctx.rotate(callout.accent ? 0.055 : -0.12)
+      ctx.rotate(-0.12)
       ctx.globalAlpha = Math.min(1, (1 - callout.age / 880) * 3)
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
       ctx.lineJoin = 'round'
-      ctx.font = '700 ' + (callout.accent ? '22px ' : '37px ') + DISPLAY_FONT
+      ctx.font = '700 37px ' + DISPLAY_FONT
       ctx.strokeStyle = '#352217'
-      ctx.lineWidth = callout.accent ? 4 : 5.5
+      ctx.lineWidth = 5.5
       ctx.shadowColor = '#35221770'
       ctx.shadowBlur = 2
       ctx.shadowOffsetY = 2
       ctx.strokeText(callout.text, 0, 0)
       ctx.shadowColor = 'transparent'
-      ctx.fillStyle = callout.accent ? '#ffcd62' : '#ffedbf'
+      ctx.fillStyle = '#ffedbf'
       ctx.fillText(callout.text, 0, 0)
       ctx.restore()
     }

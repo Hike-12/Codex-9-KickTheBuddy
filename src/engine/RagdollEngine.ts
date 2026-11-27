@@ -7,7 +7,7 @@ import { RagdollRenderer } from './RagdollRenderer'
 import { DOLL_LAYER as DOLL, FIXTURE_LAYER, MOVING_LAYERS, PROP_LAYER, ROOM_LAYER as ROOM, STEP } from './gadgetModel'
 import type { GravityMode, Tool } from './gadgetModel'
 import { clamp, localPoint } from './model'
-import type { Hud, Limb, Profile, Room, Surface } from './model'
+import type { Hardness, Hud, Limb, Profile, Room, Surface } from './model'
 import { containBody, emptyExtents, finiteBody, fitTranslation, includeBody, mayHaveEscaped, moveInward } from './roomBounds'
 
 const { Bodies, Body, Composite, Constraint, Engine, Events, MouseConstraint, Query, Sleeping, Vector: Vec } = Matter
@@ -62,7 +62,6 @@ export class RagdollEngine {
   private room: Room = { width: 1, height: 1, left: 0, right: 1, ceiling: 0, floor: 1 }
   private doll: Doll | null = null
   private cssScale = 1
-  private tokenTarget: Vector = { x: 90, y: 33 }
   private pointer: Pointer | null = null
   private gadgetPointer: number | null = null
   private hover: { point: Vector; time: number } | null = null
@@ -76,7 +75,7 @@ export class RagdollEngine {
   private capturing = false
   private pixelRatio = 1
 
-  constructor(private canvas: HTMLCanvasElement, private coinLabel: HTMLElement, profile: Profile, private onHud: (hud: Hud) => void, sound: (event: Foley) => void) {
+  constructor(private canvas: HTMLCanvasElement, profile: Profile, private onHud: (hud: Hud) => void, sound: (event: Foley) => void) {
     this.renderer = new RagdollRenderer(canvas)
     this.director = new GameDirector(profile, sound)
     this.gadgets = new GadgetSystem(this.engine, this.director, {
@@ -126,7 +125,6 @@ export class RagdollEngine {
     window.addEventListener('pointercancel', this.stopQuakeAudio, { signal })
     this.observer = new ResizeObserver(this.resize)
     this.observer.observe(canvas)
-    this.observer.observe(coinLabel)
     this.resize()
     this.spawn(true)
     if (!document.hidden) this.frame = requestAnimationFrame(this.tick)
@@ -137,7 +135,7 @@ export class RagdollEngine {
     this.renderer.setProfile(profile)
   }
 
-  scorecard() { return this.director.scorecard() }
+  setHardness(value: Hardness) { this.director.hardness = value }
 
   setCapturing(active: boolean) {
     if (this.capturing === active) return
@@ -213,8 +211,6 @@ export class RagdollEngine {
     const pixelRatio = this.pixelRatio = Math.min(devicePixelRatio || 1, 2)
     const captureRatio = this.capturing ? Math.sqrt((800 * 450) / (rect.width * rect.height)) : pixelRatio
     this.renderer.resize(this.room, this.cssScale, Math.min(pixelRatio, captureRatio))
-    const coin = this.coinLabel.getBoundingClientRect()
-    if (coin.width) this.tokenTarget = { x: (coin.left + coin.width / 2 - rect.left) / this.cssScale, y: (coin.top + coin.height / 2 - rect.top) / this.cssScale }
     if (width === old.width && height === old.height && ceiling === old.ceiling && floor === old.floor) return
     this.onBlur()
 
@@ -545,8 +541,7 @@ export class RagdollEngine {
     this.lastHud = this.director.now
     const hud = this.director.hud
     const last = this.lastSnapshot
-    if (!force && last && hud.coins === last.coins && hud.integrity === last.integrity &&
-      hud.combo === last.combo && hud.mood === last.mood && hud.comboTime === last.comboTime &&
+    if (!force && last && hud.integrity === last.integrity && hud.mood === last.mood &&
       hud.freezeProgress === last.freezeProgress && hud.frozen === last.frozen && hud.quake === last.quake) return
     this.lastSnapshot = { ...hud }
     this.onHud(this.lastSnapshot)
@@ -557,7 +552,7 @@ export class RagdollEngine {
     const dt = this.previousTime ? Math.min(time - this.previousTime, STEP * 4) : 0
     this.previousTime = time
     if (!this.paused) {
-      this.director.advance(dt, this.room, this.tokenTarget)
+      this.director.advance(dt, this.room.floor)
       this.gadgets.update(dt)
       if (this.director.respawnAt && this.director.now >= this.director.respawnAt) {
         this.director.reset(false)

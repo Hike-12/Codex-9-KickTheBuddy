@@ -34,17 +34,18 @@ For Vercel, use the Vite preset. The build outputs a static site to `dist/`, wit
 
 Swipe the gadget dock to reach every tool on a narrow screen. The room bar cycles Earth, Moon, and Zero-G gravity, starts a quake, and toggles pinball bumpers. Sound starts on the first pointer or key gesture. Mute silences both live playback and the recording.
 
+Click **Integrity** to choose **Soft**, **Reinforced**, or **Unbreakable**. Reinforced is the default. Unbreakable keeps the hit reactions and prevents wear from taking the doll apart.
+
 ## Personalize and share
 
-- **Swap Face / Roasts** lets you pick a photo or use the front camera on supported devices. Drag to pan and pinch or use the zoom slider to frame the crop. Choose an outfit and write custom roasts. Saving keeps the profile in local browser storage.
+- **Swap Face / Roasts** lets you pick a photo or use the front camera on supported devices. Drag to pan and pinch or use the zoom slider to frame the crop. Choose an outfit and write custom roasts. Enable **Use custom roasts only** to show just your lines. An empty list in this mode keeps Buddy quiet. Saving keeps the profile in local browser storage.
 - **Copy Dare Link** puts a compressed profile in the URL fragment. The link may contain a 128 × 128 face thumbnail. Longer links fall back to name, roasts, and outfit. Opening a dare applies its profile to the room without replacing the saved profile.
 - **Record 5s Clip** exports the canvas and synthesized audio as WebM or MP4, depending on browser support. Select the countdown to cancel. Capture caps the canvas at about 0.36 megapixels to limit encoding load and restores the normal rendering resolution afterward.
-- **Export Scorecard** creates a 1440 × 1840 PNG with integrity lost, best combo, collected coins, a triggered roast, and whether a doll was destroyed during the session. A doll reset keeps the session totals.
-- On phones, find exports under **Share menu**. When file sharing is supported, tap **Share clip** or **Share report** once the export is ready to open the system share sheet. Other browsers download the file directly.
+- On phones, find exports under **Share menu**. When file sharing is supported, tap **Share clip** once the recording is ready to open the system share sheet. Other browsers download the file directly.
 
 ## Architecture
 
 - React owns the controls and the friend editor. `RagdollEngine` owns the `requestAnimationFrame` loop, fixed 60 Hz Matter.js steps, pointer input, and throttled HUD snapshots.
 - `GadgetSystem` owns projectiles, fixtures, environmental forces, and the ice body. Canvas renderers draw the room, clothes, decals, and effects from game state using cached textures and paint stamps.
-- `GameDirector` tracks impacts, coins, dialogue, and report stats. It sends foley events to `CartoonAudio`, which schedules synthesis on the Web Audio clock.
-- `dareShare` validates and serializes the share profile. `dareExport` handles capture, downloads, and poster drawing outside the simulation loop. Photos, recordings, and reports are processed in the browser.
+- `GameDirector` tracks impacts, doll wear, and dialogue. It sends foley events to `CartoonAudio`, which schedules synthesis on the Web Audio clock.
+- `dareShare` validates and serializes the share profile. `dareExport` handles clip capture and downloads outside the simulation loop. Photos and recordings are processed in the browser.

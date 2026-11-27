@@ -4,9 +4,11 @@ import { clamp, isOutfit, OUTFITS } from '../engine/model'
 import type { Profile } from '../engine/model'
 import { loadFaceImage } from '../utils/dareShare'
 import { Icon } from './Icon'
+import { OptionPicker } from './OptionPicker'
 
 const SIZE = 320
 const MAX_WORKING_EDGE = 2048
+const OUTFIT_OPTIONS = Object.keys(OUTFITS).filter(isOutfit).map(value => ({ value, ...OUTFITS[value] }))
 type Offset = { x: number; y: number }
 type CropPose = { zoom: number; offset: Offset }
 type CropImage = { source: CanvasImageSource; width: number; height: number }
@@ -77,6 +79,7 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
   const [{ zoom, offset }, setCrop] = useState(INITIAL_CROP)
   const [name, setName] = useState(profile.name)
   const [roasts, setRoasts] = useState(profile.roasts.join('\n'))
+  const [customRoasts, setCustomRoasts] = useState(profile.customRoasts)
   const [blend, setBlend] = useState(profile.blend)
   const [outfit, setOutfit] = useState(profile.outfit)
   const [error, setError] = useState('')
@@ -247,7 +250,7 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
       }
     }
     onSave({
-      face: cropped, blend, outfit, name: name.trim() || 'Buddy',
+      face: cropped, blend, outfit, customRoasts, name: name.trim() || 'Buddy',
       roasts: roasts.split(/\r?\n/).map(line => line.trim().slice(0, 85)).filter(Boolean).slice(0, 8),
     })
   }
@@ -300,8 +303,12 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
             <label className="field">Friend’s name
               <input maxLength={24} value={name} onChange={event => setName(event.target.value)} placeholder="Buddy" />
             </label>
-            <label className="field">Custom roasts <span className="field-hint">One per line</span>
-              <textarea rows={4} maxLength={688} value={roasts} onChange={event => setRoasts(event.target.value)} placeholder={'Take it easy!\nIs that all you got?'} />
+            <label className="check-field"><input type="checkbox" checked={customRoasts} onChange={event => setCustomRoasts(event.target.checked)} /> Use custom roasts only</label>
+            <label className="field">Custom roasts <span className="field-hint">One per line. An empty list is silent when enabled.</span>
+              <textarea rows={4} maxLength={688} value={roasts} onChange={event => {
+                if (!roasts.trim() && event.target.value.trim()) setCustomRoasts(true)
+                setRoasts(event.target.value)
+              }} placeholder={'Take it easy!\nIs that all you got?'} />
             </label>
             <label className="field range-field"><span>Photo zoom</span><output>{Math.round(zoom * 100)}%</output>
               <input type="range" min={1} max={3} step={0.01} value={zoom} disabled={!image} onChange={event => {
@@ -311,13 +318,9 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
                 setCrop(current => ({ zoom: value, offset: cropBounds(image, value, current.offset).offset }))
               }} />
             </label>
-            <label className="field outfit-field">Outfit color
-              <select value={outfit} onChange={event => {
-                if (isOutfit(event.target.value)) setOutfit(event.target.value)
-              }}>
-                {Object.entries(OUTFITS).map(([id, item]) => <option key={id} value={id}>{item.label}</option>)}
-              </select>
-            </label>
+            <div className="field outfit-field">Outfit color
+              <OptionPicker label="Outfit color" value={outfit} options={OUTFIT_OPTIONS} onChange={setOutfit} />
+            </div>
             <label className="check-field"><input type="checkbox" checked={blend} onChange={event => setBlend(event.target.checked)} /> Burlap Fabric Blend</label>
           </section>
         </div>

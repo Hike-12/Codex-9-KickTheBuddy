@@ -2,19 +2,21 @@ import { useEffect, useRef, useState } from 'react'
 import { FaceCropModal } from './components/FaceCropModal'
 import { GadgetDock } from './components/GadgetDock'
 import { Icon } from './components/Icon'
+import { OptionPicker } from './components/OptionPicker'
 import { RoomModifiersBar } from './components/RoomModifiersBar'
 import { CONTROLS_POPOVER_ID, SHARE_POPOVER_ID, StudioExports } from './components/StudioExports'
 import { CartoonAudio } from './engine/CartoonAudio'
 import { RagdollEngine } from './engine/RagdollEngine'
 import { TOOLS } from './engine/gadgetModel'
 import type { GravityMode, Tool } from './engine/gadgetModel'
-import { DEFAULT_PROFILE, INITIAL_HUD, profileFrom } from './engine/model'
-import type { Profile } from './engine/model'
-import { canRecordClip, canShareDare, createDareFile, createScorecard, downloadDare, recordDareClip, shareDare } from './utils/dareExport'
-import type { DareExportKind } from './utils/dareExport'
+import { DEFAULT_HARDNESS, DEFAULT_PROFILE, HARDNESS, INITIAL_HUD, profileFrom } from './engine/model'
+import type { Hardness, Profile } from './engine/model'
+import { canRecordClip, canShareDare, createClipFile, downloadDare, recordDareClip, shareDare } from './utils/dareExport'
 import { copyDareLink, readDare } from './utils/dareShare'
 
 const PROFILE_KEY = 'jute-room:friend:v1'
+const HARDNESS_MENU = 'buddy-hardness'
+const HARDNESS_OPTIONS = (['soft', 'reinforced', 'unbreakable'] as const).map(value => ({ value, label: HARDNESS[value].label }))
 
 function DisplayDigits({ value }: { value: number }) {
   return [...String(value)].map((digit, index) => <span className="display-digit" key={index}>{digit}</span>)
@@ -35,6 +37,7 @@ export default function App() {
   const [profile, setProfile] = useState(() => window.location.hash.startsWith('#dare=') ? DEFAULT_PROFILE : readProfile())
   const initialProfile = useRef(profile)
   const [hud, setHud] = useState(INITIAL_HUD)
+  const [hardness, setHardness] = useState<Hardness>(DEFAULT_HARDNESS)
   const [editing, setEditing] = useState(false)
   const [tool, setTool] = useState<Tool>('grab')
   const [glove, setGlove] = useState(false)
@@ -46,11 +49,9 @@ export default function App() {
   const [recording, setRecording] = useState<number | null>(null)
   const [recordSupported] = useState(() => canRecordClip() && typeof AudioContext !== 'undefined')
   const [copying, setCopying] = useState(false)
-  const [makingPoster, setMakingPoster] = useState(false)
-  const [ready, setReady] = useState<Partial<Record<DareExportKind, File>>>({})
+  const [readyClip, setReadyClip] = useState<File | null>(null)
   const [toast, setToast] = useState('')
   const canvas = useRef<HTMLCanvasElement>(null)
-  const coin = useRef<HTMLDivElement>(null)
   const engine = useRef<RagdollEngine | null>(null)
   const swap = useRef<HTMLButtonElement>(null)
   const audio = useRef<CartoonAudio | null>(null)
@@ -60,11 +61,11 @@ export default function App() {
   const focusFrame = useRef(0)
 
   useEffect(() => {
-    if (!canvas.current || !coin.current) return
+    if (!canvas.current) return
     const sound = new CartoonAudio()
     const life = new AbortController()
     const { signal } = life
-    const room = new RagdollEngine(canvas.current, coin.current, initialProfile.current, setHud, sound.play)
+    const room = new RagdollEngine(canvas.current, initialProfile.current, setHud, sound.play)
     engine.current = room
     audio.current = sound
     lifecycle.current = life
@@ -122,33 +123,31 @@ export default function App() {
     document.getElementById(CONTROLS_POPOVER_ID)?.hidePopover?.()
     const shareMenu = document.getElementById(SHARE_POPOVER_ID)
     if (shareMenu?.hasAttribute('popover')) shareMenu.hidePopover?.()
+    document.getElementById(HARDNESS_MENU)?.hidePopover?.()
     setHudHidden(hidden => !hidden)
   }
 
-  function deliverExport(blob: Blob, name: string, kind: DareExportKind, signal: AbortSignal) {
-    const file = createDareFile(blob, name, kind)
-    const label = kind === 'clip' ? 'Clip' : 'Damage report'
+  function deliverClip(blob: Blob, name: string, signal: AbortSignal) {
+    const file = createClipFile(blob, name)
     if (matchMedia('(any-pointer: coarse), (width < 640px)').matches && canShareDare(file)) {
-      setReady(previous => ({ ...previous, [kind]: file }))
-      announce(label + ' ready to share')
+      setReadyClip(file)
+      announce('Clip ready to share')
     } else {
       downloadDare(file, signal)
-      announce(label + ' downloaded')
+      announce('Clip downloaded')
     }
   }
 
-  async function shareExport(kind: DareExportKind) {
-    const file = ready[kind]
+  async function shareClip() {
     const signal = lifecycle.current?.signal
-    if (!file || !signal) return
-    const label = kind === 'clip' ? 'Clip' : 'Damage report'
+    if (!readyClip || !signal) return
     try {
-      const result = await shareDare(file, signal)
+      const result = await shareDare(readyClip, signal)
       if (signal.aborted || result === 'canceled') return
-      setReady(previous => previous[kind] === file ? { ...previous, [kind]: undefined } : previous)
-      announce(label + (result === 'shared' ? ' shared' : ' downloaded'))
+      setReadyClip(previous => previous === readyClip ? null : previous)
+      announce(result === 'shared' ? 'Clip shared' : 'Clip downloaded')
     } catch {
-      if (!signal.aborted) announce(label + ' could not be saved')
+      if (!signal.aborted) announce('Clip could not be saved')
     }
   }
 
@@ -189,7 +188,7 @@ export default function App() {
       room.setCapturing(true)
       const blob = await recordDareClip(scene, track, setRecording, clip.signal)
       if (!signal.aborted && !clip.signal.aborted) {
-        deliverExport(blob, profile.name, 'clip', signal)
+        deliverClip(blob, profile.name, signal)
       }
     } catch {
       if (!signal.aborted && !clip.signal.aborted) announce('Couldn’t record this clip in this browser')
@@ -210,23 +209,6 @@ export default function App() {
     engine.current?.setCapturing(false)
     setRecording(null)
     announce('Recording canceled')
-  }
-
-  async function exportPoster() {
-    const stats = engine.current?.scorecard()
-    const signal = lifecycle.current?.signal
-    if (!stats || !signal || makingPoster) return
-    setMakingPoster(true)
-    try {
-      const poster = await createScorecard(profile, stats)
-      if (!signal.aborted) {
-        deliverExport(poster, profile.name, 'scorecard', signal)
-      }
-    } catch {
-      if (!signal.aborted) announce('Couldn’t export the damage report')
-    } finally {
-      if (!signal.aborted) setMakingPoster(false)
-    }
   }
 
   function selectTool(next: Tool) {
@@ -255,7 +237,7 @@ export default function App() {
   }
 
   return (
-    <main className="playroom" data-hud-hidden={hudHidden} data-export-status={recording !== null || Boolean(ready.clip || ready.scorecard)}>
+    <main className="playroom" data-hud-hidden={hudHidden} data-export-status={recording !== null || Boolean(readyClip)}>
       <div className="stage-surface">
         <canvas ref={canvas} className="studio" aria-label="Interactive ragdoll studio" aria-describedby="play-instructions" tabIndex={0} />
       </div>
@@ -265,13 +247,8 @@ export default function App() {
           <h1>Jute Room</h1>
         </div>
         <div className="telemetry" aria-label="Game stats">
-          <div ref={coin} className="stat stat-coin" aria-label={'Gold coins: ' + hud.coins}><Icon name="coin" /><strong>${hud.coins.toLocaleString()}</strong></div>
           <div className="stat stat-friend" title={profile.name}><span className="dot" /> <strong>{profile.name}</strong></div>
           <div className="stat stat-mood" aria-label={'Mood: ' + hud.mood}><Icon name="mood" /><span>{hud.mood}</span></div>
-          <div className={'stat stat-combo' + (hud.combo ? ' is-live' : '')} aria-label={'Combo: ' + hud.combo}>
-            <Icon name="bolt" size={17} /><strong>×<DisplayDigits value={hud.combo} /></strong>
-            <span className="combo-track" aria-hidden="true" style={{ transform: 'scaleX(' + hud.comboTime + ')' }} />
-          </div>
         </div>
         <div className="studio-actions">
           <button ref={swap} className="control" aria-label="Swap Face / Roasts" title="Swap Face / Roasts" onClick={() => { engine.current?.setPaused(true); setEditing(true) }}>
@@ -282,14 +259,14 @@ export default function App() {
           </button>
         </div>
       </header>
-      <StudioExports muted={muted} recording={recording} canRecord={recordSupported} copying={copying} makingPoster={makingPoster}
-        readyClip={Boolean(ready.clip)} readyPoster={Boolean(ready.scorecard)} onShare={kind => { void shareExport(kind) }}
+      <StudioExports muted={muted} recording={recording} canRecord={recordSupported} copying={copying}
+        readyClip={Boolean(readyClip)} onShare={() => { void shareClip() }}
         onMute={() => {
           audio.current?.setMuted(!muted)
           setMuted(!muted)
         }}
         onCopy={() => { void copyDare() }} onRecord={() => { void record() }} onCancel={cancelRecording}
-        onPoster={() => { void exportPoster() }} onHide={toggleHud} />
+        onHide={toggleHud} />
       <RoomModifiersBar gravity={gravity} bumpers={bumpers} quake={hud.quake}
         onGravity={() => {
           const next = gravity === 'normal' ? 'moon' : gravity === 'moon' ? 'zero' : 'normal'
@@ -301,9 +278,14 @@ export default function App() {
           engine.current?.setBumpers(!bumpers)
         }}
         onQuake={() => engine.current?.quake()} onClear={clearRoom} />
-      <aside className="integrity" aria-label={'Integrity: ' + hud.integrity + '%'} data-low={hud.integrity < 30}>
-        <div><span>Stitch integrity</span><strong><DisplayDigits value={hud.integrity} />%</strong></div>
-        <meter min={0} max={100} value={hud.integrity} aria-label="Stitch integrity" />
+      <aside className="integrity" data-low={hud.integrity < 30}>
+        <OptionPicker id={HARDNESS_MENU} label="Buddy hardness" value={hardness} options={HARDNESS_OPTIONS} onChange={value => {
+          setHardness(value)
+          engine.current?.setHardness(value)
+        }}>
+          <span className="integrity-reading"><span>Integrity</span><strong><DisplayDigits value={hud.integrity} />%</strong><Icon name="chevron" size={13} /></span>
+          <meter min={0} max={100} value={hud.integrity} aria-label="Stitch integrity" />
+        </OptionPicker>
       </aside>
       {dareMode && <span className="dare-mode">Dare mode active</span>}
       <footer className="studio-footer">

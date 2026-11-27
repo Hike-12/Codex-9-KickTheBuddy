@@ -1,5 +1,4 @@
 import { useRef, useSyncExternalStore } from 'react'
-import type { DareExportKind } from '../utils/dareExport'
 import { Icon } from './Icon'
 
 export const CONTROLS_POPOVER_ID = 'studio-controls'
@@ -12,18 +11,16 @@ const subscribeCompact = (update: () => void) => {
 }
 
 export function StudioExports({
-  muted, recording, canRecord, copying, makingPoster, readyClip, readyPoster,
-  onMute, onCopy, onRecord, onCancel, onPoster, onHide, onShare,
+  muted, recording, canRecord, copying, readyClip,
+  onMute, onCopy, onRecord, onCancel, onHide, onShare,
 }: {
-  muted: boolean; recording: number | null; canRecord: boolean; copying: boolean; makingPoster: boolean
-  readyClip: boolean; readyPoster: boolean; onShare: (kind: DareExportKind) => void
-  onMute: () => void; onCopy: () => void; onRecord: () => void; onCancel: () => void; onPoster: () => void; onHide: () => void
+  muted: boolean; recording: number | null; canRecord: boolean; copying: boolean
+  readyClip: boolean; onShare: () => void
+  onMute: () => void; onCopy: () => void; onRecord: () => void; onCancel: () => void; onHide: () => void
 }) {
   const compact = useSyncExternalStore(subscribeCompact, readCompact)
   const options = useRef<HTMLDivElement>(null)
   const closeOptions = () => { if (compact) options.current?.hidePopover?.() }
-  const prepared = readyClip ? 'clip' : readyPoster ? 'scorecard' : null
-  const readyLabel = prepared === 'clip' ? 'Share clip' : 'Share report'
   return (
     <section className="export-bar" aria-label="Studio sharing and controls">
       {compact && <button type="button" className="control export-icon share-menu-toggle" popoverTarget={SHARE_POPOVER_ID}
@@ -38,11 +35,7 @@ export function StudioExports({
         {recording === null ? <><Icon name="clip" size={17} /><span className="export-long">Record 5s Clip</span><span className="export-short">Clip</span></> :
           <span className="recording-state" role="status"><span className="record-dot" /><span className="export-long">Recording</span> {recording}s</span>}
       </button>
-      <button type="button" className="control export-control" onClick={() => { closeOptions(); onPoster() }} aria-label="Export Scorecard" disabled={makingPoster} title="Export Scorecard">
-        <Icon name="report" size={17} /><span className="export-long">Export Scorecard</span><span className="export-short">Report</span>
-      </button>
-      {compact && readyClip && <button type="button" className="control export-control" onClick={() => onShare('clip')}><Icon name="clip" size={17} />Share clip</button>}
-      {compact && readyPoster && <button type="button" className="control export-control" onClick={() => onShare('scorecard')}><Icon name="report" size={17} />Share report</button>}
+      {compact && readyClip && <button type="button" className="control export-control" onClick={onShare}><Icon name="clip" size={17} />Share clip</button>}
       <button type="button" className="control export-icon controls-toggle" popoverTarget={CONTROLS_POPOVER_ID}
         aria-label="Controls and shortcuts" aria-keyshortcuts="?" title="Controls and shortcuts (?)">{compact ? 'Help & controls' : '?'}</button>
       </div>
@@ -53,12 +46,11 @@ export function StudioExports({
       {compact && recording !== null && <button type="button" className="control mobile-export-status" onClick={onCancel} aria-label="Cancel recording">
         <span className="record-dot" /> <span className="recording-state" role="status">{recording}s · Cancel</span>
       </button>}
-      {compact && recording === null && prepared && <button type="button" className="control mobile-export-status" onClick={() => onShare(prepared)}>
-        <Icon name="share" size={16} />{readyLabel}
+      {compact && recording === null && readyClip && <button type="button" className="control mobile-export-status" onClick={onShare}>
+        <Icon name="share" size={16} />Share clip
       </button>}
-      {!compact && prepared && <div className="desktop-share-files">
-        {readyClip && <button type="button" className="control" onClick={() => onShare('clip')}>Share clip</button>}
-        {readyPoster && <button type="button" className="control" onClick={() => onShare('scorecard')}>Share report</button>}
+      {!compact && readyClip && <div className="desktop-share-files">
+        <button type="button" className="control" onClick={onShare}>Share clip</button>
       </div>}
       <section id={CONTROLS_POPOVER_ID} className="controls-popover" popover="auto" aria-labelledby="controls-heading">
         <h2 id="controls-heading">Studio controls</h2>

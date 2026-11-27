@@ -4,7 +4,6 @@ type Loop = 'vortex' | 'freeze' | 'quake'
 export type Foley =
   | { kind: 'impact' | 'anvil' | 'boing'; speed: number }
   | { kind: 'splat'; egg: boolean }
-  | { kind: 'coin'; combo: number }
   | { kind: 'loop'; loop: Loop; active: boolean }
   | { kind: 'pop' | 'punch' | 'shockwave' | 'ice' | 'pet' }
 
@@ -13,7 +12,6 @@ type Graph = {
   recording: MediaStreamAudioDestinationNode; noise: AudioBuffer | null
 }
 type Hum = { kind: Loop; envelope: GainNode; oscillators: OscillatorNode[] }
-const CHIMES = [1046.5, 1318.51, 1567.98, 1975.53]
 
 export class CartoonAudio {
   private graph: Graph | null = null
@@ -134,12 +132,6 @@ export class CartoonAudio {
         }
         this.tone(graph, 290, 120, 0.25, 0.08, 'triangle')
         break
-      case 'coin': {
-        const tone = CHIMES[clamp(Math.floor((event.combo - 1) / 2), 0, CHIMES.length - 1)] ?? 1046.5
-        this.tone(graph, tone, tone, 0.22, 0.12, 'sine')
-        this.tone(graph, tone * 1.5, tone * 1.5, 0.24, 0.045, 'sine', 0.042)
-        break
-      }
       case 'pet':
         this.tone(graph, 329.63, 323, 0.18, 0.061, 'triangle')
         this.tone(graph, 440, 435, 0.22, 0.036, 'sine', 0.052)

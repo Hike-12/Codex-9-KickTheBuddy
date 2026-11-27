@@ -117,25 +117,14 @@
 .stat svg { flex: none; }
 .stat + .stat { border-left: 1px solid var(--color-seam); }
 .stat strong { font-weight: 700; }
-.stat-coin { color: var(--color-brass); min-width: 84px; }
 .stat-friend { max-width: 152px; }
 .stat-friend strong { overflow: hidden; text-overflow: ellipsis; }
 .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--color-sage); }
 .stat-mood { color: var(--color-sage); min-width: 101px; }
-.stat-combo { position: relative; color: var(--color-muted); min-width: 72px; }
-.stat-combo strong, .integrity strong { font-family: var(--font-display); }
-.stat-coin, .stat-combo, .integrity strong, .range-field output, .recording-state, kbd { font-variant-numeric: tabular-nums; }
+.integrity strong { font-family: var(--font-display); }
+.integrity strong, .range-field output, .recording-state, kbd { font-variant-numeric: tabular-nums; }
 .display-digit { display: inline-block; inline-size: 1ch; text-align: center; }
 kbd { font-family: var(--font-ui); }
-.stat-combo.is-live { color: var(--color-brass); }
-.combo-track {
-  position: absolute;
-  inset: auto 0 0;
-  height: 2px;
-  background: var(--color-brass);
-  transform-origin: left;
-  transition: transform 83ms linear;
-}
 
 .studio-actions { display: flex; justify-content: end; gap: 8px; }
 .control {
@@ -259,21 +248,16 @@ kbd { font-family: var(--font-ui); }
   position: absolute;
   top: max(121px, calc(env(safe-area-inset-top) + 103px));
   right: max(24px, env(safe-area-inset-right));
-  padding: 8px 12px;
   width: 152px;
-  border-radius: 6px;
-  border: 1px solid #715139;
-  background: #33251ce8;
-  pointer-events: none;
 }
-.integrity > div { display: flex; justify-content: space-between; gap: 8px; color: var(--color-muted); font-size: .8125rem; }
+.integrity .choice-trigger { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-height: 44px; padding: 7px 8px; }
+.integrity-reading { display: flex; align-items: center; justify-content: space-between; gap: 4px; color: var(--color-muted); font-size: .8125rem; }
 .integrity strong { color: var(--color-paper); }
 .integrity meter {
   appearance: none;
   display: block;
   width: 100%;
   height: 3px;
-  margin-top: 6px;
   background: var(--color-seam);
   border: 0;
 }
@@ -446,7 +430,7 @@ kbd { font-family: var(--font-ui); }
 .fields, .field { display: grid; align-content: start; gap: 12px; min-width: 0; }
 .field { gap: 6px; font-size: .875rem; font-weight: 700; }
 .field-hint { margin-top: -4px; color: var(--color-muted); font-size: .8125rem; font-weight: 400; }
-.field input:not([type="range"]), .field textarea, .field select {
+.field input:not([type="range"]), .field textarea {
   width: 100%;
   min-height: 44px;
   padding: 8px 12px;
@@ -457,7 +441,36 @@ kbd { font-family: var(--font-ui); }
   font: 400 1rem var(--font-ui);
 }
 .field textarea { resize: vertical; min-height: 72px; }
-.field select { cursor: pointer; }
+.choice-trigger { justify-content: space-between; width: 100%; }
+.choice-menu:popover-open {
+  position: fixed;
+  inset: auto;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  margin: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--color-seam);
+  border-radius: 6px;
+  color: var(--color-paper);
+  background: var(--color-panel);
+  box-shadow: 0 3px 0 #181410;
+}
+.choice-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  text-align: start;
+}
+.choice-option:hover, .choice-option[aria-pressed="true"] { background: var(--color-hover); border-color: var(--color-seam); }
+.choice-option:focus-visible { outline-offset: -2px; }
+.choice-option svg { margin-inline-start: auto; color: var(--color-brass); }
+.choice-swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--color-muted); }
 .range-field { grid-template-columns: 1fr auto; align-items: center; }
 .range-field output { color: var(--color-muted); font-weight: 400; }
 .range-field input { grid-column: 1 / -1; width: 100%; accent-color: var(--color-brass); }
@@ -515,7 +528,6 @@ kbd { font-family: var(--font-ui); }
   .studio-actions .control { gap: 5px; padding-inline: 7px; }
   .studio-actions .control svg { width: 16px; height: 16px; }
   .stat { height: 38px; padding-inline: 8px; gap: 6px; }
-  .stat-coin, .stat-mood, .stat-combo { min-width: 0; }
   .stat-friend { max-width: 92px; }
   .studio-footer { bottom: max(10px, env(safe-area-inset-bottom)); }
   .gadget-console { gap: 4px; }
@@ -523,9 +535,8 @@ kbd { font-family: var(--font-ui); }
   .room-pill { padding-inline: 4px; }
   .export-bar { gap: 4px; }
   .export-bar .export-control { padding-inline: 7px; }
-  .integrity { width: 124px; padding: 5px 8px; }
-  .integrity > div { font-size: .75rem; }
-  .integrity meter { margin-top: 4px; }
+  .integrity { width: 124px; }
+  .integrity-reading { font-size: .75rem; }
   .gadget-button { flex-direction: column; gap: 3px; min-height: 48px; padding: 4px 7px; }
   .gadget-button svg { width: 16px; height: 16px; }
   .modal-heading, .modal-footer { padding: 12px 16px; }
@@ -570,8 +581,8 @@ kbd { font-family: var(--font-ui); }
   .export-bar .export-icon { width: 34px; padding-inline: 0; }
   .room-modifiers { top: max(111px, calc(env(safe-area-inset-top) + 103px)); left: max(12px, env(safe-area-inset-left)); width: min(374px, calc(100% - 154px)); }
   .room-pill { min-height: 32px; }
-  .integrity { top: max(111px, calc(env(safe-area-inset-top) + 103px)); right: max(12px, env(safe-area-inset-right)); width: 124px; padding: 4px 8px; }
-  .integrity > div { font-size: .75rem; }
+  .integrity { top: max(111px, calc(env(safe-area-inset-top) + 103px)); right: max(12px, env(safe-area-inset-right)); width: 124px; }
+  .integrity-reading { font-size: .75rem; }
   .controls-popover { top: 100px; right: 12px; max-height: calc(100dvh - 112px); }
   .dare-mode { top: 140px; left: 12px; }
   .studio-footer { inset-inline: max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right)); bottom: max(8px, env(safe-area-inset-bottom)); }

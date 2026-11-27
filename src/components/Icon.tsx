@@ -2,8 +2,8 @@ import type { ReactNode } from 'react'
 
 const glyphs = {
   thread: <><path d="m3 21 6-6m.4-2.8L17.5 4a2.1 2.1 0 0 1 3 3l-8.2 8.1-3.8.9.9-3.8Z"/><path d="m16 8 2-2M3 17a4 4 0 1 1 5-5" /></>,
-  coin: <><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="6"/><path d="M12 9v6"/></>,
-  bolt: <path d="m13 2-8 12h6l-1 8 9-12h-6l1-8Z" />,
+  chevron: <path d="m6 9 6 6 6-6" />,
+  check: <path d="m5 12 4 4L19 6" />,
   mood: <><circle cx="12" cy="12" r="9"/><path d="M8 14c1.7 2.5 6.3 2.5 8 0M9 9h.01M15 9h.01"/></>,
   portrait: <><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="12" cy="10" r="2.5"/><path d="M7 18c.5-3 2.3-4.5 5-4.5s4.5 1.5 5 4.5"/></>,
   reset: <><path d="M3 11a9 9 0 1 1 2.8 7M3 5v6h6"/></>,
@@ -27,7 +27,6 @@ const glyphs = {
   link: <><path d="M10 13a4 4 0 0 0 6 0l3-3a4 4 0 0 0-6-6l-2 2"/><path d="M14 11a4 4 0 0 0-6 0l-3 3a4 4 0 0 0 6 6l2-2"/></>,
   share: <><path d="M12 15V3m-4 4 4-4 4 4"/><path d="M8 10H5v11h14V10h-3"/></>,
   clip: <><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3V9Z"/></>,
-  report: <><path d="M6 3h8l4 4v14H6V3Zm8 0v5h4M9 12h6m-6 4h6"/></>,
 } satisfies Record<string, ReactNode>
 
 export function Icon({ name, size = 19 }: { name: keyof typeof glyphs; size?: number }) {

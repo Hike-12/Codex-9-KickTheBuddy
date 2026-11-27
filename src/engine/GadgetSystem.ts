@@ -210,10 +210,6 @@ export class GadgetSystem {
         pushVelocity(body, direction, clamp(68 - distance * 0.057, 26, 68), 0.24)
         Body.setAngularVelocity(body, clamp(body.angularVelocity + 0.19, -0.33, 0.33))
       }
-      this.director.affectCoins((coin, vx, vy) => {
-        const direction = aim(point, coin)
-        return { x: direction.x * 37 + vx * 0.2, y: direction.y * 37 + vy * 0.2 }
-      })
       this.director.rattle({ x: 0.8, y: 0.6 }, 13)
       this.director.sound({ kind: 'shockwave' })
     }
@@ -438,7 +434,6 @@ export class GadgetSystem {
     this.doll.wake()
     this.doll.setSolid(true)
     Composite.add(this.world, body)
-    this.director.bonus(body.position, 8, 'FROZEN')
   }
 
   private syncIce() {
@@ -469,7 +464,6 @@ export class GadgetSystem {
       const impactPoint = point ?? ice.body.position
       this.emitShards(ice.body.position, 35)
       this.emitShards(impactPoint, 12)
-      this.director.bonus(impactPoint, 18, 'SHATTER')
       this.director.rattle({ x: 0.6, y: -0.8 }, 12)
       this.director.sound({ kind: 'ice' })
     }
@@ -556,7 +550,6 @@ export class GadgetSystem {
         const velocity = Body.getVelocity(body)
         Body.setVelocity(body, orbit(body.position, velocity.x, velocity.y))
       }
-      this.director.affectCoins(orbit)
     }
     if (this.now < this.quakeUntil && this.now >= this.nextQuake) {
       this.nextQuake = this.now + 130
@@ -566,7 +559,6 @@ export class GadgetSystem {
         const nearEdge = Math.min(body.position.x - this.room.left, this.room.right - body.position.x, this.room.floor - body.position.y)
         pushVelocity(body, { x: drift, y: nearEdge < 100 ? -0.9 : shake * 0.6 }, 11)
       }
-      this.director.affectCoins((_coin, vx, vy) => ({ x: vx + drift * 6, y: vy - 6 }))
       this.director.rattle({ x: drift, y: shake * 0.58 }, 12)
     }
     for (const shot of this.shots) {
@@ -698,7 +690,6 @@ export class GadgetSystem {
     if (limb || body === ice) {
       const point = support ?? body.position
       this.director.impact(point, pad ? 7 : 9, normal, 0)
-      this.director.bonus(point, pad ? 8 : 5, pad ? 'BOING!' : 'PINBALL')
     }
   }
 }
