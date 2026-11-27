@@ -34,11 +34,10 @@ export function isOutfit(value: unknown): value is Outfit {
 
 export function profileFrom(value: unknown): Profile | null {
   if (typeof value !== 'object' || value === null) return null
+  const lines: readonly unknown[] = 'roasts' in value && Array.isArray(value.roasts) ? value.roasts : []
   return {
     name: 'name' in value && typeof value.name === 'string' ? value.name.trim().slice(0, 24) || DEFAULT_PROFILE.name : DEFAULT_PROFILE.name,
-    roasts: 'roasts' in value && Array.isArray(value.roasts)
-      ? value.roasts.filter((line: unknown): line is string => typeof line === 'string').map(line => line.trim().slice(0, 85)).filter(Boolean).slice(0, 8)
-      : [],
+    roasts: lines.filter((line): line is string => typeof line === 'string').map(line => line.trim().slice(0, 85)).filter(Boolean).slice(0, 8),
     face: 'face' in value && typeof value.face === 'string' && value.face.length <= 600000 &&
       /^data:image\/(webp|png|jpeg);base64,[\da-z+/]+={0,2}$/i.test(value.face) ? value.face : null,
     outfit: 'outfit' in value && isOutfit(value.outfit) ? value.outfit : DEFAULT_PROFILE.outfit,

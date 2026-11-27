@@ -134,6 +134,10 @@ export class GadgetRenderer {
         disc(pen, Math.cos(angle) * d, Math.sin(angle) * d, 1.2 + i % 3, color)
       }
       ellipse(pen, -3, -3, 6, 2.4, kind === 'egg' ? '#fff3af' : '#ffffff55')
+      if (this.stamps.size >= 32) {
+        const oldest = this.stamps.keys().next()
+        if (!oldest.done) this.stamps.delete(oldest.value)
+      }
       this.stamps.set(key, stamp)
     }
     ctx.drawImage(stamp, x - size * 1.55, y - size * 1.55, size * 3.1, size * 3.1)

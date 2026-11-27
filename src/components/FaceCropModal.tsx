@@ -2,35 +2,56 @@ import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent, KeyboardEvent, PointerEvent } from 'react'
 import { clamp, isOutfit, OUTFITS } from '../engine/model'
 import type { Profile } from '../engine/model'
+import { loadFaceImage } from '../utils/dareShare'
 import { Icon } from './Icon'
 
 const SIZE = 320
-const ALLOWED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
+const MAX_WORKING_EDGE = 2048
 type Offset = { x: number; y: number }
+type CropImage = { source: CanvasImageSource; width: number; height: number }
 
-async function decode(url: string) {
-  const image = new Image()
-  image.src = url
-  await image.decode()
-  return image
+async function rasterType(file: File) {
+  const bytes = new Uint8Array(await file.slice(0, 12).arrayBuffer())
+  if ([137, 80, 78, 71, 13, 10, 26, 10].every((value, i) => bytes[i] === value)) return 'image/png'
+  if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return 'image/jpeg'
+  if (String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' &&
+      String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP') return 'image/webp'
+  return null
 }
 
-function cropBounds(image: HTMLImageElement, zoom: number, offset: Offset) {
-  const scale = Math.max(SIZE / image.naturalWidth, SIZE / image.naturalHeight) * zoom
-  const width = image.naturalWidth * scale
-  const height = image.naturalHeight * scale
+async function decode(url: string): Promise<CropImage> {
+  const image = await loadFaceImage(url)
+  const width = image.naturalWidth
+  const height = image.naturalHeight
+  if (!width || !height) throw new Error('Empty image')
+  const ratio = MAX_WORKING_EDGE / Math.max(width, height)
+  if (ratio >= 1) return { source: image, width, height }
+  const reduced = document.createElement('canvas')
+  reduced.width = Math.max(1, Math.round(width * ratio))
+  reduced.height = Math.max(1, Math.round(height * ratio))
+  const ctx = reduced.getContext('2d')
+  if (!ctx) throw new Error('Canvas 2D is unavailable')
+  ctx.imageSmoothingQuality = 'high'
+  ctx.drawImage(image, 0, 0, reduced.width, reduced.height)
+  return { source: reduced, width: reduced.width, height: reduced.height }
+}
+
+function cropBounds(image: CropImage, zoom: number, offset: Offset) {
+  const scale = Math.max(SIZE / image.width, SIZE / image.height) * zoom
+  const width = image.width * scale
+  const height = image.height * scale
   return {
     width, height,
     offset: {
-      x: clamp(offset.x, -(width - SIZE) / 2, (width - SIZE) / 2),
-      y: clamp(offset.y, -(height - SIZE) / 2, (height - SIZE) / 2),
+      x: clamp(offset.x, -Math.max(0, width - SIZE) / 2, Math.max(0, width - SIZE) / 2),
+      y: clamp(offset.y, -Math.max(0, height - SIZE) / 2, Math.max(0, height - SIZE) / 2),
     },
   }
 }
 
-function drawCrop(ctx: CanvasRenderingContext2D, image: HTMLImageElement, zoom: number, offset: Offset) {
+function drawCrop(ctx: CanvasRenderingContext2D, image: CropImage, zoom: number, offset: Offset) {
   const crop = cropBounds(image, zoom, offset)
-  ctx.drawImage(image, (SIZE - crop.width) / 2 + crop.offset.x, (SIZE - crop.height) / 2 + crop.offset.y, crop.width, crop.height)
+  ctx.drawImage(image.source, (SIZE - crop.width) / 2 + crop.offset.x, (SIZE - crop.height) / 2 + crop.offset.y, crop.width, crop.height)
 }
 
 export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; onClose: () => void; onSave: (profile: Profile) => void }) {
@@ -38,7 +59,7 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
   const preview = useRef<HTMLCanvasElement>(null)
   const request = useRef(0)
   const drag = useRef<{ pointer: number; x: number; y: number } | null>(null)
-  const [image, setImage] = useState<HTMLImageElement | null>(null)
+  const [image, setImage] = useState<CropImage | null>(null)
   const [face, setFace] = useState(profile.face)
   const [dirtyCrop, setDirtyCrop] = useState(false)
   const [zoom, setZoom] = useState(1)
@@ -51,10 +72,10 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    dialog.current?.showModal()
-    if (!profile.face) return
+    const modal = dialog.current
+    if (modal && !modal.open) modal.showModal()
     const id = ++request.current
-    void decode(profile.face).then(value => {
+    if (profile.face) void decode(profile.face).then(value => {
       if (id === request.current) setImage(value)
     }).catch(() => {
       if (id === request.current) setError('The saved photo could not be opened. Choose a new image.')
@@ -112,15 +133,23 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
     const file = event.currentTarget.files?.[0]
     event.currentTarget.value = ''
     if (!file) return
-    if (!ALLOWED_TYPES.has(file.type) || file.size > 12 * 1024 * 1024) {
+    const id = ++request.current
+    if (file.size > 12 * 1024 * 1024) {
+      setLoading(false)
       setError('Choose a PNG, JPG, or WebP under 12 MB.')
       return
     }
     setError('')
     setLoading(true)
-    const id = ++request.current
-    const url = URL.createObjectURL(file)
+    let url: string | undefined
     try {
+      const type = await rasterType(file)
+      if (id !== request.current) return
+      if (!type) {
+        setError('Choose a PNG, JPG, or WebP under 12 MB.')
+        return
+      }
+      url = URL.createObjectURL(file.type === type ? file : new Blob([file], { type }))
       const selected = await decode(url)
       if (id !== request.current) return
       setImage(selected)
@@ -130,7 +159,7 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
     } catch {
       if (id === request.current) setError('This image could not be opened. Try another file.')
     } finally {
-      URL.revokeObjectURL(url)
+      if (url) URL.revokeObjectURL(url)
       if (id === request.current) setLoading(false)
     }
   }
@@ -144,7 +173,9 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
   function pointerMove(event: PointerEvent<HTMLCanvasElement>) {
     const active = drag.current
     if (!active || active.pointer !== event.pointerId) return
-    const scale = SIZE / event.currentTarget.getBoundingClientRect().width
+    const width = event.currentTarget.getBoundingClientRect().width
+    if (!width) return
+    const scale = SIZE / width
     pan((event.clientX - active.x) * scale, (event.clientY - active.y) * scale)
     active.x = event.clientX
     active.y = event.clientY
@@ -160,14 +191,20 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
 
   function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (loading) return
     let cropped = face
     if (image && dirtyCrop) {
       const output = document.createElement('canvas')
       output.width = output.height = SIZE
       const ctx = output.getContext('2d')
       if (!ctx) return
-      drawCrop(ctx, image, zoom, offset)
-      cropped = output.toDataURL('image/webp', 0.91)
+      try {
+        drawCrop(ctx, image, zoom, offset)
+        cropped = output.toDataURL('image/webp', 0.91)
+      } catch {
+        setError('Couldn’t save this crop. Try another photo.')
+        return
+      }
     }
     onSave({
       face: cropped, blend, outfit, name: name.trim() || 'Buddy',
@@ -225,7 +262,7 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
                 const value = Number(event.target.value)
                 setZoom(value)
                 setDirtyCrop(true)
-                if (image) setOffset(cropBounds(image, value, offset).offset)
+                if (image) setOffset(current => cropBounds(image, value, current).offset)
               }} />
             </label>
             <label className="field outfit-field">Outfit color

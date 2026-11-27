@@ -7,26 +7,35 @@ const CLIP_MS = 5000
 const WEBM = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm']
 
 function fileName(name: string) {
-  return name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 44) || 'buddy'
+  return name.normalize('NFC').replace(/\p{Script=Latin}+/gu, text =>
+    text.normalize('NFD').replace(/\p{M}/gu, '')).toLowerCase()
+    .replace(/[^\p{L}\p{N}\p{M}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 44) || 'buddy'
 }
 
-export function downloadDare(blob: Blob, name: string, kind: 'clip' | 'scorecard') {
+export function downloadDare(blob: Blob, name: string, kind: 'clip' | 'scorecard', signal: AbortSignal) {
+  if (signal.aborted) return
   const link = document.createElement('a')
   const url = URL.createObjectURL(blob)
   link.href = url
   link.download = kind === 'clip' ? 'buddy-dare-' + fileName(name) + '.webm' : 'buddy-dare-' + fileName(name) + '-damage-report.png'
   document.body.append(link)
-  link.click()
-  link.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 1500)
+  const release = () => {
+    URL.revokeObjectURL(url)
+    window.clearTimeout(timer)
+    signal.removeEventListener('abort', release)
+  }
+  const timer = window.setTimeout(release, 1500)
+  signal.addEventListener('abort', release, { once: true })
+  try { link.click() }
+  finally { link.remove() }
 }
 
-function webmMime() {
-  if (typeof MediaRecorder === 'undefined' || typeof HTMLCanvasElement.prototype.captureStream !== 'function') return undefined
-  return WEBM.find(type => MediaRecorder.isTypeSupported(type))
+function webmTypes() {
+  if (typeof MediaRecorder === 'undefined' || typeof HTMLCanvasElement.prototype.captureStream !== 'function') return []
+  return WEBM.filter(type => MediaRecorder.isTypeSupported(type))
 }
 
-export function canRecordClip() { return webmMime() !== undefined }
+export function canRecordClip() { return webmTypes().length > 0 }
 
 export function recordDareClip(
   canvas: HTMLCanvasElement,
@@ -35,8 +44,8 @@ export function recordDareClip(
   signal: AbortSignal,
 ) {
   return new Promise<Blob>((resolve, reject) => {
-    const mimeType = webmMime()
-    if (!mimeType) { reject(new Error('WebM recording is unavailable')); return }
+    const types = webmTypes()
+    if (!types.length) { reject(new Error('WebM recording is unavailable')); return }
     if (signal.aborted) { reject(signal.reason); return }
 
     const tracks: MediaStreamTrack[] = []
@@ -59,7 +68,7 @@ export function recordDareClip(
       cleanup()
       if (error !== undefined) reject(error)
       else {
-        const blob = new Blob(chunks, { type: recorder?.mimeType || mimeType })
+        const blob = new Blob(chunks, { type: recorder?.mimeType || 'video/webm' })
         if (blob.size) resolve(blob)
         else reject(new Error('The recording did not contain frames'))
       }
@@ -71,16 +80,26 @@ export function recordDareClip(
     }
 
     try {
-      tracks.push(...canvas.captureStream(60).getVideoTracks(), audioTrack.clone())
+      tracks.push(...canvas.captureStream(60).getVideoTracks())
+      tracks.push(audioTrack.clone())
       const stream = new MediaStream(tracks)
       if (!stream.getVideoTracks().length || !stream.getAudioTracks().length) throw new Error('The game capture did not provide both tracks')
-      recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 1800000, audioBitsPerSecond: 96000 })
+      for (const mimeType of types) {
+        try {
+          const candidate = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 1800000, audioBitsPerSecond: 96000 })
+          candidate.start()
+          recorder = candidate
+          break
+        } catch {
+          // A browser can advertise a codec that fails to open for this stream.
+        }
+      }
+      if (!recorder) throw new Error('A WebM encoder could not start')
       const capture = recorder
       capture.ondataavailable = event => { if (event.data.size) chunks.push(event.data) }
       capture.onstop = () => finish()
       capture.onerror = () => finish(new Error('The browser stopped the recording'))
       signal.addEventListener('abort', cancel, { once: true })
-      capture.start()
       const ends = performance.now() + CLIP_MS
       onSecond(CLIP_MS / 1000)
       countdown = window.setInterval(() => onSecond(Math.max(0, Math.ceil((ends - performance.now()) / 1000))), 1000)
@@ -249,9 +268,15 @@ export async function createScorecard(profile: Profile, stats: DareStats) {
   ctx.font = 'bold 13px monospace'
   ctx.fillText('ROAST OF THE ROUND', 360, 691)
   ctx.fillStyle = INK
-  ctx.font = 'italic 27px Georgia, serif'
   const quoted = stats.roast ? '“' + stats.roast + '”' : 'No roast triggered yet'
-  wrap(ctx, quoted, 517).slice(0, 3).forEach((row, i) => ctx.fillText(row, 360, 726 + i * 30, 517))
+  let roastSize = 27
+  ctx.font = 'italic ' + roastSize + 'px Georgia, serif'
+  let rows = wrap(ctx, quoted, 517)
+  while (rows.length > 3 && roastSize > 12) {
+    ctx.font = 'italic ' + --roastSize + 'px Georgia, serif'
+    rows = wrap(ctx, quoted, 517)
+  }
+  rows.forEach((row, i) => ctx.fillText(row, 360, 726 + i * Math.min(30, 66 / Math.max(1, rows.length - 1)), 517))
 
   ctx.save()
   ctx.translate(360, 835)

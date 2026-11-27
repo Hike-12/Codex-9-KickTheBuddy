@@ -113,6 +113,7 @@ export class RagdollRenderer {
       this.photo = null
       return
     }
+    this.photo = null
     const image = new Image()
     image.onload = () => {
       if (request !== this.faceRequest) return
@@ -358,6 +359,10 @@ export class RagdollRenderer {
         line(ctx, left + 5, y + i * 3, w / 2 - 5, y + i * 3 - 2, '#684b32', 2.2)
         line(ctx, left + 5, y + i * 3 - 1, w / 2 - 5, y + i * 3 - 3, '#dfba7e', 1)
       }
+    }
+    if (this.limbs.size >= 11) {
+      const oldest = this.limbs.keys().next()
+      if (!oldest.done) this.limbs.delete(oldest.value)
     }
     this.limbs.set(key, canvas)
     return canvas

@@ -5,6 +5,7 @@ import type { Ammo, Attachment, Bumper, Decal, Glove, GravityMode, Ice, Mount, P
 import type { GameDirector } from './GameDirector'
 import { clamp, localPoint } from './model'
 import type { Limb, Room } from './model'
+import { containBody, finiteBody } from './roomBounds'
 
 const { Bodies, Body, Composite, Vector: Vec } = Matter
 const ICE_HIT = 17
@@ -78,6 +79,7 @@ export class GadgetSystem {
   private gravity: GravityMode = 'normal'
   private nextShot = 0
   private nextQuake = 0
+  private quakeAudible = false
   private shotIndex = 0
   private impactAt = -1000
   private clangAt = -1000
@@ -105,6 +107,14 @@ export class GadgetSystem {
     this.quakeUntil = this.now + 2500
     this.nextQuake = this.now
     this.doll.wake()
+    this.quakeAudible = true
+    this.director.sound({ kind: 'loop', loop: 'quake', active: true })
+  }
+
+  silenceQuake() {
+    if (!this.quakeAudible) return
+    this.quakeAudible = false
+    this.director.sound({ kind: 'loop', loop: 'quake', active: false })
   }
 
   setBumpers(enabled: boolean) {
@@ -135,13 +145,16 @@ export class GadgetSystem {
     })
     for (const shot of this.shots) Composite.remove(this.world, shot.body)
     this.shots.length = 0
-    for (const body of this.anvils) Body.setPosition(body, this.bounds(project(body.position), 37))
+    for (const body of this.anvils) {
+      Body.setPosition(body, this.bounds(project(body.position), 37))
+      containBody(body, room, true)
+    }
     for (const decal of this.wallDecals) Object.assign(decal, this.bounds(project(decal)))
     for (const pad of this.pads) {
       pad.mount = this.mountFrom(project(pad.mount.point), pad.mount.edge)
       Body.setPosition(pad.body, Vec.add(pad.mount.point, Vec.mult(pad.mount.normal, 9)))
     }
-    for (const turret of this.turrets) turret.mount = this.mountFrom(project(turret.mount.point), turret.mount.edge)
+    for (const turret of this.turrets) turret.mount = this.mountFrom(project(turret.mount.point), turret.mount.edge, true)
     if (this.bumpers.length) this.setBumpers(true)
     if (this.ice) {
       const { body, width, height } = this.ice
@@ -152,6 +165,7 @@ export class GadgetSystem {
         x: clamp(point.x, room.left + radiusX, room.right - radiusX),
         y: clamp(point.y, room.ceiling + radiusY, room.floor - radiusY),
       })
+      containBody(body, room, true)
       this.syncIce()
     }
   }
@@ -180,6 +194,7 @@ export class GadgetSystem {
   }
 
   release(detonate: boolean) {
+    this.silenceQuake()
     if (this.held && (this.tool === 'vortex' || this.tool === 'freeze')) {
       this.director.sound({ kind: 'loop', loop: this.tool, active: false })
     }
@@ -206,7 +221,8 @@ export class GadgetSystem {
   }
 
   resetDoll() {
-    if (this.ice) this.thaw(false)
+    if (this.ice) Composite.remove(this.world, this.ice.body)
+    this.ice = null
     if (this.attachments.length) this.director.sound({ kind: 'pop' })
     this.attachments.length = 0
     this.freezeProgress = 0
@@ -216,6 +232,7 @@ export class GadgetSystem {
 
   clear() {
     this.release(false)
+    if (this.ice) this.thaw(false)
     this.resetDoll()
     Composite.clear(this.world, false)
     for (const group of [this.shots, this.anvils, this.pads, this.turrets, this.bumpers, this.wallDecals, this.shards]) group.length = 0
@@ -482,6 +499,7 @@ export class GadgetSystem {
     this.director.hud.freezeProgress = Math.round(this.freezeProgress * 100)
     this.director.hud.frozen = Boolean(this.ice)
     this.director.hud.quake = this.now < this.quakeUntil
+    if (!this.director.hud.quake) this.silenceQuake()
     if (this.shock && this.now - this.shock.time > 420) this.shock = null
     for (let i = this.turrets.length - 1; i >= 0; i--) {
       const turret = this.turrets[i]
@@ -558,6 +576,7 @@ export class GadgetSystem {
   }
 
   afterStep() {
+    if (this.ice && finiteBody(this.ice.body)) containBody(this.ice.body, this.room)
     if (this.thawAt) {
       const point = this.thawAt
       this.thawAt = null
@@ -605,15 +624,13 @@ export class GadgetSystem {
       }
       this.updateGlove(targets)
     }
-    for (const anvil of this.anvils) {
-      const position = anvil.position
-      const point = this.bounds(position, 15)
-      const hitX = position.x !== point.x
-      const hitY = position.y !== point.y
-      if (hitX || hitY) {
-        Body.setPosition(anvil, point)
-        const velocity = Body.getVelocity(anvil)
-        Body.setVelocity(anvil, { x: hitX ? 0 : velocity.x, y: hitY ? 0 : velocity.y })
+    for (let i = this.anvils.length - 1; i >= 0; i--) {
+      const anvil = this.anvils[i]
+      if (!anvil) continue
+      if (finiteBody(anvil)) containBody(anvil, this.room)
+      else {
+        Composite.remove(this.world, anvil)
+        this.anvils.splice(i, 1)
       }
     }
   }

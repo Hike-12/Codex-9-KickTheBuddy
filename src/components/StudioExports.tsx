@@ -3,18 +3,19 @@ import { Icon } from './Icon'
 export const CONTROLS_POPOVER_ID = 'studio-controls'
 
 export function StudioExports({
-  muted, recording, canRecord, copying, makingPoster, onMute, onCopy, onRecord, onPoster, onHide,
+  muted, recording, canRecord, copying, makingPoster, onMute, onCopy, onRecord, onCancel, onPoster, onHide,
 }: {
   muted: boolean; recording: number | null; canRecord: boolean; copying: boolean; makingPoster: boolean
-  onMute: () => void; onCopy: () => void; onRecord: () => void; onPoster: () => void; onHide: () => void
+  onMute: () => void; onCopy: () => void; onRecord: () => void; onCancel: () => void; onPoster: () => void; onHide: () => void
 }) {
   return (
     <section className="export-bar" aria-label="Studio sharing and controls">
       <button type="button" className="control export-control" onClick={onCopy} aria-label="Copy Dare Link" disabled={copying} title="Copy Dare Link">
         <Icon name="link" size={17} /><span className="export-long">Copy Dare Link</span><span className="export-short">Dare</span>
       </button>
-      <button type="button" className="control export-control" onClick={onRecord} aria-label="Record 5s Clip" disabled={!canRecord || recording !== null}
-        title={canRecord ? 'Record 5s Clip' : 'This browser does not support WebM recording'}>
+      <button type="button" className="control export-control" onClick={recording === null ? onRecord : onCancel}
+        aria-label={recording === null ? 'Record 5s Clip' : 'Cancel recording'} disabled={!canRecord}
+        title={!canRecord ? 'This browser does not support WebM recording' : recording === null ? 'Record 5s Clip' : 'Cancel recording'}>
         {recording === null ? <><Icon name="clip" size={17} /><span className="export-long">Record 5s Clip</span><span className="export-short">Clip</span></> :
           <span className="recording-state" role="status"><span className="record-dot" /><span className="export-long">Recording</span> {recording}s</span>}
       </button>

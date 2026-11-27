@@ -8,6 +8,7 @@ import { DOLL_LAYER as DOLL, FIXTURE_LAYER, MOVING_LAYERS, PROP_LAYER, ROOM_LAYE
 import type { GravityMode, Tool } from './gadgetModel'
 import { clamp, localPoint } from './model'
 import type { Hud, Limb, Profile, Room, Surface } from './model'
+import { containBody, emptyExtents, finiteBody, fitTranslation, includeBody, mayHaveEscaped, moveInward } from './roomBounds'
 
 const { Bodies, Body, Composite, Constraint, Engine, Events, MouseConstraint, Query, Sleeping, Vector: Vec } = Matter
 const PARTS = {
@@ -54,7 +55,7 @@ export class RagdollEngine {
   private director: GameDirector
   private gadgets: GadgetSystem
   private mouse: MatterMouse & { sourceEvents: { mousemove: null; mousedown: null; mouseup: null; mousewheel: null } }
-  private grabConstraint: Matter.MouseConstraint
+  private grabConstraint: Omit<Matter.MouseConstraint, 'body'> & { body: RigidBody | null }
   private observer: ResizeObserver
   private events = new AbortController()
   private reducedMotion = matchMedia('(prefers-reduced-motion: reduce)')
@@ -73,6 +74,7 @@ export class RagdollEngine {
   private paused = false
   private glovePrimary = false
   private capturing = false
+  private pixelRatio = 1
 
   constructor(private canvas: HTMLCanvasElement, private coinLabel: HTMLElement, profile: Profile, private onHud: (hud: Hud) => void, sound: (event: Foley) => void) {
     this.renderer = new RagdollRenderer(canvas)
@@ -101,12 +103,13 @@ export class RagdollEngine {
       offset: zero(), scale: { x: 1, y: 1 }, button: -1, wheelDelta: 0, pixelRatio: 1,
       sourceEvents: { mousemove: null, mousedown: null, mouseup: null, mousewheel: null },
     }
-    this.grabConstraint = MouseConstraint.create(this.engine, {
+    const grabConstraint = MouseConstraint.create(this.engine, {
       mouse: this.mouse,
       constraint: { stiffness: 0.27, damping: 0.14 },
       collisionFilter: { category: ROOM, mask: MOVING_LAYERS, group: 0 },
     })
-    Composite.add(this.engine.world, this.grabConstraint)
+    this.grabConstraint = grabConstraint
+    Composite.add(this.engine.world, grabConstraint)
     Events.on(this.engine, 'collisionStart', this.onCollision)
     const { signal } = this.events
     canvas.addEventListener('pointerdown', this.onDown, { signal })
@@ -117,6 +120,10 @@ export class RagdollEngine {
     canvas.addEventListener('pointerleave', this.onLeave, { signal })
     canvas.addEventListener('contextmenu', this.onContextMenu, { signal })
     document.addEventListener('visibilitychange', this.onVisibility, { signal })
+    window.addEventListener('blur', this.onBlur, { signal })
+    window.addEventListener('resize', this.resize, { signal })
+    window.addEventListener('pointerup', this.stopQuakeAudio, { signal })
+    window.addEventListener('pointercancel', this.stopQuakeAudio, { signal })
     this.observer = new ResizeObserver(this.resize)
     this.observer.observe(canvas)
     this.observer.observe(coinLabel)
@@ -161,6 +168,7 @@ export class RagdollEngine {
   clearRoom() {
     this.release()
     this.gadgets.clear()
+    this.containDoll(true)
     this.gadgets.update(0)
     this.publishHud(true)
   }
@@ -188,38 +196,40 @@ export class RagdollEngine {
     const rect = this.canvas.getBoundingClientRect()
     if (rect.width < 1 || rect.height < 1) return
     const roomWidth = rect.width <= 510 ? 560 : 690
-    this.cssScale = clamp(Math.min(rect.width / roomWidth, rect.height / 625) * 1.07, 0.38, 1.45)
+    const floorRatio = rect.width <= 510 && rect.height < 670 ? 0.79 : 0.835
+    const shortLandscape = rect.width > rect.height && rect.height <= 470 && rect.width <= 820
+    const ceilingCss = Math.max(rect.height * 0.103, shortLandscape
+      ? Math.min(142, rect.height * 0.45)
+      : Math.min(rect.width <= 760 ? 196 : 132, rect.height * 0.35))
+    const floorCss = rect.height * floorRatio
+    this.cssScale = Math.min(Math.min(rect.width / roomWidth, rect.height / 625) * 1.07,
+      (floorCss - ceilingCss) / 378, rect.width * 0.826 / 378, 1.45)
     const width = rect.width / this.cssScale
     const height = rect.height / this.cssScale
     const old = this.room
     const gutter = Math.min(width * 0.087, 102)
-    const topClearance = Math.min((rect.width <= 760 ? 196 : 132) / this.cssScale, height * 0.35)
-    const floorRatio = rect.width <= 510 && rect.height < 670 ? 0.79 : 0.835
-    this.room = { width, height, left: gutter, right: width - gutter, ceiling: Math.max(height * 0.103, topClearance), floor: height * floorRatio }
+    this.room = { width, height, left: gutter, right: width - gutter, ceiling: ceilingCss / this.cssScale, floor: floorCss / this.cssScale }
     const { left, right, floor, ceiling } = this.room
-    const pixelRatio = Math.min(devicePixelRatio || 1, 2)
+    const pixelRatio = this.pixelRatio = Math.min(devicePixelRatio || 1, 2)
     const captureRatio = this.capturing ? Math.sqrt((800 * 450) / (rect.width * rect.height)) : pixelRatio
     this.renderer.resize(this.room, this.cssScale, Math.min(pixelRatio, captureRatio))
     const coin = this.coinLabel.getBoundingClientRect()
-    this.tokenTarget = { x: (coin.left + coin.width / 2 - rect.left) / this.cssScale, y: (coin.top + coin.height / 2 - rect.top) / this.cssScale }
+    if (coin.width) this.tokenTarget = { x: (coin.left + coin.width / 2 - rect.left) / this.cssScale, y: (coin.top + coin.height / 2 - rect.top) / this.cssScale }
     if (width === old.width && height === old.height && ceiling === old.ceiling && floor === old.floor) return
+    this.onBlur()
 
-    const hip = this.doll?.head.body.position
-    if (hip && !this.gadgets.ice) {
-      const dx = clamp(hip.x / old.width * width, left + 76, right - 76) - hip.x
-      const dy = floor - old.floor
-      const minY = Math.min(...(this.doll?.limbs.map(limb => limb.body.bounds.min.y) ?? [ceiling]))
-      const maxY = Math.max(...(this.doll?.limbs.map(limb => limb.body.bounds.max.y) ?? [floor]))
-      const minX = Math.min(...(this.doll?.limbs.map(limb => limb.body.bounds.min.x) ?? [left]))
-      const maxX = Math.max(...(this.doll?.limbs.map(limb => limb.body.bounds.max.x) ?? [right]))
-      const translation = {
-        x: clamp(dx, left + 2 - minX, right - 2 - maxX),
-        y: clamp(dy, ceiling + 2 - minY, floor - 2 - maxY),
-      }
-      if (this.doll) {
-        Composite.translate(this.doll.composite, translation)
-        const suspension = this.doll.suspension
-        if (suspension) { suspension.pointA.x += translation.x; suspension.pointA.y += translation.y }
+    const doll = this.doll
+    if (doll && !this.gadgets.ice) {
+      const head = doll.head.body.position
+      const extents = emptyExtents()
+      for (const limb of doll.limbs) includeBody(extents, limb.body)
+      const translation = fitTranslation(extents, this.room, {
+        x: clamp(head.x / old.width * width, left + 76, right - 76) - head.x, y: floor - old.floor,
+      })
+      Composite.translate(doll.composite, translation)
+      if (doll.suspension) {
+        doll.suspension.pointA.x += translation.x
+        doll.suspension.pointA.y += translation.y
       }
     }
 
@@ -241,6 +251,7 @@ export class RagdollEngine {
     wall(width / 2, ceiling - thickness / 2, width + thickness, thickness, { x: 0, y: 1 })
     wall(width / 2, floor + thickness / 2, width + thickness, thickness, { x: 0, y: -1 })
     this.gadgets.resize(this.room)
+    this.containDoll(true)
   }
 
   private spawn(hang: boolean) {
@@ -328,9 +339,11 @@ export class RagdollEngine {
     this.unhang()
     Object.assign(this.mouse.position, point)
     this.mouse.button = 0
-    const spring = this.grabConstraint.constraint
+    const spring: Pin & { angleB?: number } = this.grabConstraint.constraint
     // Matter rotates the anchor incrementally starting at the body's angle at pickup.
-    Object.assign(spring, { bodyB: body, pointB: Vec.sub(point, body.position), angleB: body.angle })
+    spring.bodyB = body
+    spring.pointB = Vec.sub(point, body.position)
+    spring.angleB = body.angle
     this.grabConstraint.body = body
     Sleeping.set(body, false)
     this.director.grab()
@@ -407,6 +420,15 @@ export class RagdollEngine {
     this.stopGadget(false)
   }
 
+  private onBlur = () => {
+    this.release()
+    this.hover = null
+    this.gadgets.move(null)
+    delete this.canvas.dataset.hover
+  }
+
+  private stopQuakeAudio = () => this.gadgets.silenceQuake()
+
   private stopGadget(detonate: boolean) {
     const id = this.gadgetPointer
     this.gadgetPointer = null
@@ -424,7 +446,9 @@ export class RagdollEngine {
     const id = this.pointer?.id
     this.pointer = null
     this.mouse.button = -1
-    Object.assign(this.grabConstraint.constraint, { bodyB: null, pointB: null })
+    this.grabConstraint.constraint.bodyB = null
+    this.grabConstraint.constraint.pointB = zero()
+    this.grabConstraint.body = null
     delete this.canvas.dataset.grabbing
     if (id !== undefined && this.canvas.hasPointerCapture(id)) this.canvas.releasePointerCapture(id)
   }
@@ -467,11 +491,38 @@ export class RagdollEngine {
     }
     Engine.update(this.engine, STEP)
     this.gadgets.afterStep()
+    if (!this.containDoll()) return
     if (this.director.hud.integrity <= 0 && this.doll) {
       this.director.pop(this.doll.head.body.position)
       this.release()
       this.removeDoll()
     }
+  }
+
+  private containDoll(strict = false) {
+    const { doll, room } = this
+    if (!doll) return true
+    const ice = this.gadgets.ice?.body
+    if (ice ? !finiteBody(ice) : doll.limbs.some(({ body }) => !finiteBody(body))) {
+      this.reset()
+      return false
+    }
+    if (ice || (!strict && !doll.limbs.some(({ body }) => mayHaveEscaped(body, room)))) return true
+    const extents = emptyExtents()
+    for (const limb of doll.limbs) includeBody(extents, limb.body)
+    const slack = strict ? 0 : 12
+    if (extents.left >= room.left - slack && extents.right <= room.right + slack &&
+        extents.ceiling >= room.ceiling - slack && extents.floor <= room.floor + slack) return true
+    const delta = fitTranslation(extents, room, zero())
+    for (const limb of doll.limbs) moveInward(limb.body, delta)
+    if (doll.suspension) {
+      doll.suspension.pointA.x += delta.x
+      doll.suspension.pointA.y += delta.y
+    }
+    if (extents.right - extents.left > room.right - room.left || extents.floor - extents.ceiling > room.floor - room.ceiling) {
+      for (const limb of doll.limbs) containBody(limb.body, room, true)
+    }
+    return true
   }
 
   private publishHud(force = false) {
@@ -487,6 +538,7 @@ export class RagdollEngine {
   }
 
   private tick = (time: number) => {
+    if (Math.min(devicePixelRatio || 1, 2) !== this.pixelRatio) this.resize()
     const dt = this.previousTime ? Math.min(time - this.previousTime, STEP * 4) : 0
     this.previousTime = time
     if (!this.paused) {
@@ -520,7 +572,7 @@ export class RagdollEngine {
     cancelAnimationFrame(this.frame)
     this.previousTime = 0
     this.accumulator = 0
-    if (document.hidden) this.release()
+    if (document.hidden) this.onBlur()
     else this.frame = requestAnimationFrame(this.tick)
   }
 }

@@ -32,13 +32,13 @@ For Vercel, use the Vite preset. The build outputs a static site to `dist/`, wit
 | `H` | Hide or restore the HUD. |
 | `?` | Open or close the controls popover. |
 
-The dock and buttons work with touch. The room bar cycles Earth, Moon, and Zero-G gravity, starts a quake, and toggles pinball bumpers. Sound starts on the first pointer or key gesture. The speaker toggle mutes playback while preserving sound in recordings.
+The dock and buttons work with touch. The room bar cycles Earth, Moon, and Zero-G gravity, starts a quake, and toggles pinball bumpers. Sound starts on the first pointer or key gesture. Mute silences both live playback and the recording.
 
 ## Personalize and share
 
 - **Swap Face / Roasts** lets you crop a PNG, JPG, or WebP photo, choose an outfit, and write custom roasts. Saving keeps the profile in local browser storage.
 - **Copy Dare Link** puts a compressed profile in the URL fragment. The link may contain a 128 × 128 face thumbnail. Longer links fall back to name, roasts, and outfit. Opening a dare applies its profile to the room without replacing the saved profile.
-- **Record 5s Clip** downloads a WebM with the canvas and synthesized audio. Capture caps the canvas at about 0.36 megapixels to limit encoding load and restores the normal rendering resolution afterward. It requires a browser that supports recording WebM from canvas and Web Audio streams.
+- **Record 5s Clip** downloads a WebM with the canvas and synthesized audio. Select the countdown to cancel and discard the partial clip. Capture caps the canvas at about 0.36 megapixels to limit encoding load and restores the normal rendering resolution afterward. WebM recording requires browser support.
 - **Export Scorecard** downloads a 1440 × 1840 PNG. It records actual integrity lost, best combo, collected coins, a triggered roast, and whether a doll was destroyed during the page session. A doll reset keeps the session totals.
 
 ## Architecture

@@ -27,7 +27,7 @@ function readProfile(): Profile {
 }
 
 export default function App() {
-  const [profile, setProfile] = useState(readProfile)
+  const [profile, setProfile] = useState(() => window.location.hash.startsWith('#dare=') ? DEFAULT_PROFILE : readProfile())
   const initialProfile = useRef(profile)
   const [hud, setHud] = useState(INITIAL_HUD)
   const [editing, setEditing] = useState(false)
@@ -50,7 +50,8 @@ export default function App() {
   const audio = useRef<CartoonAudio | null>(null)
   const lifecycle = useRef<AbortController | null>(null)
   const toastTimer = useRef(0)
-  const clipInFlight = useRef(false)
+  const clipInFlight = useRef<AbortController | null>(null)
+  const focusFrame = useRef(0)
 
   useEffect(() => {
     if (!canvas.current || !coin.current) return
@@ -71,9 +72,10 @@ export default function App() {
     let current = 0
     const hydrate = async () => {
       const id = ++current
-      const dare = await readDare(window.location.hash)
+      const hash = window.location.hash
+      const dare = await readDare(hash)
       if (signal.aborted || id !== current) return
-      const next = dare ?? readProfile()
+      const next = dare ?? (hash.startsWith('#dare=') ? DEFAULT_PROFILE : readProfile())
       setDareMode(Boolean(dare))
       setProfile(next)
       room.setProfile(next)
@@ -82,7 +84,10 @@ export default function App() {
     window.addEventListener('hashchange', () => { void hydrate() }, { signal })
     return () => {
       life.abort()
+      clipInFlight.current?.abort()
+      clipInFlight.current = null
       window.clearTimeout(toastTimer.current)
+      cancelAnimationFrame(focusFrame.current)
       room.destroy()
       sound.destroy()
       engine.current = null
@@ -93,7 +98,7 @@ export default function App() {
 
   useEffect(() => {
     function keydown(event: KeyboardEvent) {
-      if (editing || event.repeat || event.metaKey || event.ctrlKey || event.altKey ||
+      if (editing || event.defaultPrevented || event.repeat || event.metaKey || event.ctrlKey || event.altKey ||
         (event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable]'))) return
       const key = event.key.toLowerCase()
       if (key === 'r') engine.current?.reset()
@@ -138,28 +143,39 @@ export default function App() {
     const scene = canvas.current
     const room = engine.current
     if (!signal || !sound || !scene || !room || clipInFlight.current) return
-    clipInFlight.current = true
+    const clip = new AbortController()
+    clipInFlight.current = clip
     setRecording(5)
     try {
       if (!await sound.unlock()) throw new Error('Studio sound could not start')
-      if (signal.aborted) return
+      if (signal.aborted || clip.signal.aborted) return
       const track = sound.recordingTrack()
       if (!track) throw new Error('The recording audio track is unavailable')
       room.setCapturing(true)
-      const blob = await recordDareClip(scene, track, setRecording, signal)
-      if (!signal.aborted) {
-        downloadDare(blob, profile.name, 'clip')
+      const blob = await recordDareClip(scene, track, setRecording, clip.signal)
+      if (!signal.aborted && !clip.signal.aborted) {
+        downloadDare(blob, profile.name, 'clip', signal)
         announce('Clip downloaded')
       }
     } catch {
-      if (!signal.aborted) announce('Couldn’t record this clip in this browser')
+      if (!signal.aborted && !clip.signal.aborted) announce('Couldn’t record this clip in this browser')
     } finally {
-      clipInFlight.current = false
-      if (!signal.aborted) {
+      if (clipInFlight.current === clip) {
+        clipInFlight.current = null
         room.setCapturing(false)
         setRecording(null)
       }
     }
+  }
+
+  function cancelRecording() {
+    const clip = clipInFlight.current
+    if (!clip) return
+    clipInFlight.current = null
+    clip.abort()
+    engine.current?.setCapturing(false)
+    setRecording(null)
+    announce('Recording canceled')
   }
 
   async function exportPoster() {
@@ -170,7 +186,7 @@ export default function App() {
     try {
       const poster = await createScorecard(profile, stats)
       if (!signal.aborted) {
-        downloadDare(poster, profile.name, 'scorecard')
+        downloadDare(poster, profile.name, 'scorecard', signal)
         announce('Damage report downloaded')
       }
     } catch {
@@ -194,7 +210,8 @@ export default function App() {
   function closeCustomizer() {
     engine.current?.setPaused(false)
     setEditing(false)
-    requestAnimationFrame(() => swap.current?.focus({ preventScroll: true }))
+    cancelAnimationFrame(focusFrame.current)
+    focusFrame.current = requestAnimationFrame(() => swap.current?.focus({ preventScroll: true }))
   }
 
   function saveProfile(value: Profile) {
@@ -235,7 +252,8 @@ export default function App() {
           audio.current?.setMuted(!muted)
           setMuted(!muted)
         }}
-        onCopy={() => { void copyDare() }} onRecord={() => { void record() }} onPoster={() => { void exportPoster() }} onHide={toggleHud} />
+        onCopy={() => { void copyDare() }} onRecord={() => { void record() }} onCancel={cancelRecording}
+        onPoster={() => { void exportPoster() }} onHide={toggleHud} />
       <RoomModifiersBar gravity={gravity} bumpers={bumpers} quake={hud.quake}
         onGravity={() => {
           const next = gravity === 'normal' ? 'moon' : gravity === 'moon' ? 'zero' : 'normal'

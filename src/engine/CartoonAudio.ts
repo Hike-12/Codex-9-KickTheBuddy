@@ -1,6 +1,6 @@
 import { clamp } from './model'
 
-type Loop = 'vortex' | 'freeze'
+type Loop = 'vortex' | 'freeze' | 'quake'
 export type Foley =
   | { kind: 'impact' | 'anvil' | 'boing'; speed: number }
   | { kind: 'splat'; egg: boolean }
@@ -9,7 +9,7 @@ export type Foley =
   | { kind: 'pop' | 'punch' | 'shockwave' | 'ice' | 'pet' }
 
 type Graph = {
-  context: AudioContext; bus: DynamicsCompressorNode; monitor: GainNode
+  context: AudioContext; bus: DynamicsCompressorNode; output: GainNode
   recording: MediaStreamAudioDestinationNode; noise: AudioBuffer | null
 }
 type Hum = { kind: Loop; envelope: GainNode; oscillators: OscillatorNode[] }
@@ -17,7 +17,7 @@ const CHIMES = [1046.5, 1318.51, 1567.98, 1975.53]
 
 export class CartoonAudio {
   private graph: Graph | null = null
-  private monitorMuted = false
+  private muted = false
   private voices = 0
   private requestedLoop: Loop | null = null
   private loop: Hum | null = null
@@ -25,21 +25,24 @@ export class CartoonAudio {
   async unlock() {
     if (typeof AudioContext === 'undefined') return false
     if (!this.ready && navigator.userActivation && !navigator.userActivation.isActive) return false
+    let pending: AudioContext | undefined
     try {
       if (!this.graph) {
-        const context = new AudioContext({ latencyHint: 'interactive' })
+        const context = pending = new AudioContext({ latencyHint: 'interactive' })
         const bus = context.createDynamicsCompressor()
         bus.threshold.value = -18
         bus.knee.value = 13
         bus.ratio.value = 5
         bus.attack.value = 0.003
         bus.release.value = 0.17
-        const monitor = context.createGain()
-        monitor.gain.value = this.monitorMuted ? 0 : 0.68
+        const output = context.createGain()
+        output.gain.value = this.muted ? 0 : 0.68
         const recording = context.createMediaStreamDestination()
-        bus.connect(recording)
-        bus.connect(monitor).connect(context.destination)
-        this.graph = { context, bus, monitor, recording, noise: null }
+        bus.connect(output)
+        output.connect(recording)
+        output.connect(context.destination)
+        this.graph = { context, bus, output, recording, noise: null }
+        pending = undefined
       }
       const graph = this.graph
       if (graph.context.state !== 'running') await graph.context.resume()
@@ -47,6 +50,7 @@ export class CartoonAudio {
       this.syncLoop()
       return true
     } catch {
+      if (pending) void pending.close().catch(() => {})
       return false
     }
   }
@@ -54,9 +58,9 @@ export class CartoonAudio {
   get ready() { return this.graph?.context.state === 'running' }
 
   setMuted(value: boolean) {
-    this.monitorMuted = value
+    this.muted = value
     const graph = this.graph
-    if (graph) graph.monitor.gain.setTargetAtTime(value ? 0 : 0.68, graph.context.currentTime, 0.022)
+    if (graph) graph.output.gain.setValueAtTime(value ? 0 : 0.68, graph.context.currentTime)
   }
 
   recordingTrack() {
@@ -76,7 +80,10 @@ export class CartoonAudio {
   play = (event: Foley) => {
     if (event.kind === 'loop') {
       if (event.active) this.requestedLoop = event.loop
-      else if (this.requestedLoop === event.loop) this.requestedLoop = null
+      else if (this.requestedLoop === event.loop) {
+        this.requestedLoop = null
+        this.stopLoop()
+      }
       this.syncLoop()
       return
     }
@@ -231,16 +238,16 @@ export class CartoonAudio {
     const start = context.currentTime
     const envelope = context.createGain()
     envelope.gain.setValueAtTime(0, start)
-    envelope.gain.setTargetAtTime(kind === 'vortex' ? 0.20 : 0.049, start, 0.072)
+    envelope.gain.setTargetAtTime(kind === 'vortex' ? 0.20 : kind === 'quake' ? 0.13 : 0.049, start, 0.072)
     envelope.connect(graph.bus)
     const carrier = context.createOscillator()
-    carrier.type = kind === 'vortex' ? 'triangle' : 'sine'
-    carrier.frequency.setValueAtTime(kind === 'vortex' ? 55 : 1360, start)
-    carrier.frequency.setTargetAtTime(kind === 'vortex' ? 93 : 2080, start, kind === 'vortex' ? 0.9 : 0.5)
+    carrier.type = kind === 'freeze' ? 'sine' : 'triangle'
+    carrier.frequency.setValueAtTime(kind === 'vortex' ? 55 : kind === 'quake' ? 38 : 1360, start)
+    carrier.frequency.setTargetAtTime(kind === 'vortex' ? 93 : kind === 'quake' ? 46 : 2080, start, kind === 'vortex' ? 0.9 : 0.5)
     const lfo = context.createOscillator()
     const depth = context.createGain()
-    lfo.frequency.value = kind === 'vortex' ? 9 : 27
-    depth.gain.value = kind === 'vortex' ? 6 : 93
+    lfo.frequency.value = kind === 'vortex' ? 9 : kind === 'quake' ? 14 : 27
+    depth.gain.value = kind === 'vortex' ? 6 : kind === 'quake' ? 10 : 93
     lfo.connect(depth).connect(carrier.frequency)
     carrier.connect(envelope)
     carrier.start(start)

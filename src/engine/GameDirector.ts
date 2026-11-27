@@ -75,7 +75,7 @@ export class GameDirector {
     this.burst('heart', point, 2)
     if (++this.petCount % 4 === 0) {
       this.coins(point, 3, 1)
-      this.callouts.push({ text: '+$3', x: point.x, y: point.y - 12, age: 0, accent: true })
+      this.addCallout({ text: '+$3', x: point.x, y: point.y - 12, age: 0, accent: true })
     }
   }
 
@@ -100,15 +100,15 @@ export class GameDirector {
     const value = (critical ? 25 : 5) * Math.min(4, Math.max(1, Math.ceil(this.hud.combo / 3)))
     this.coins(point, value, critical ? 5 : 3)
     this.burst('spark', point, heavy ? 11 : 5)
-    this.callouts.push({ text: '+$' + value, x: point.x + 18, y: point.y + 15, age: 0, accent: true })
+    this.addCallout({ text: '+$' + value, x: point.x + 18, y: point.y + 15, age: 0, accent: true })
     if (this.hud.combo >= 3) {
-      this.callouts.push({ text: 'x' + this.hud.combo + ' COMBO', x: point.x, y: point.y - 49, age: 0, accent: true })
+      this.addCallout({ text: 'x' + this.hud.combo + ' COMBO', x: point.x, y: point.y - 49, age: 0, accent: true })
     }
     if (heavy) {
       this.freezeUntil = this.now + clamp(35 + (speed - 11) * 1.8, 35, 60)
       this.shake = { ...direction, until: this.now + 230, strength: clamp(speed * 0.42, 5, 16) }
       this.burst('cotton', point, critical ? 14 : 6)
-      this.callouts.push({
+      this.addCallout({
         text: critical ? 'CRITICAL!' : (['BONK!', 'OOF!', 'SLAM!'][this.hud.combo % 3] ?? 'BONK!'),
         x: point.x, y: point.y - 14, age: 0, accent: false,
       })
@@ -119,7 +119,7 @@ export class GameDirector {
 
   bonus(point: Vector, value: number, label: string) {
     this.coins(point, value, 3)
-    this.callouts.push({ text: label + ' +$' + value, x: point.x, y: point.y - 20, age: 0, accent: true })
+    this.addCallout({ text: label + ' +$' + value, x: point.x, y: point.y - 20, age: 0, accent: true })
   }
 
   rattle(direction: Vector, strength: number) {
@@ -141,7 +141,7 @@ export class GameDirector {
     this.destroyed = true
     this.burst('cotton', point, 54)
     this.burst('confetti', point, 34)
-    this.callouts.push({ text: 'POP!', x: point.x, y: point.y - 36, age: 0, accent: false })
+    this.addCallout({ text: 'POP!', x: point.x, y: point.y - 36, age: 0, accent: false })
     this.speech = null
     this.respawnAt = this.now + 710
   }
@@ -213,6 +213,11 @@ export class GameDirector {
     }
     for (const callout of this.callouts) callout.age += dt
     while ((this.callouts[0]?.age ?? 0) > 880) this.callouts.shift()
+  }
+
+  private addCallout(callout: Callout) {
+    if (this.callouts.length >= 48) this.callouts.shift()
+    this.callouts.push(callout)
   }
 
   private coins(point: Vector, value: number, count: number) {
