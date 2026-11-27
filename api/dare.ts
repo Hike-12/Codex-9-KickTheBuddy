@@ -1,12 +1,12 @@
 import { get, put } from '@vercel/blob'
-import { profileFrom } from '../src/engine/model'
-import { DARE_ID } from '../src/utils/dareLink'
+import { profileFrom } from '../src/engine/model.js'
+import { DARE_ID } from '../src/utils/dareLink.js'
 
 const MAX_PROFILE_SIZE = 604_000
 const headers = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }
 const pathname = (id: string) => `dares/${id}.json`
 
-export async function POST(request: Request) {
+async function saveDare(request: Request) {
   const origin = request.headers.get('origin')
   if (origin && origin !== new URL(request.url).origin) return new Response(null, { status: 403, headers })
   if (request.headers.get('content-type')?.split(';', 1)[0] !== 'application/json') {
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
   }
 }
 
-export async function GET(request: Request) {
+async function loadDare(request: Request) {
   const id = new URL(request.url).searchParams.get('id')
   if (!id || !DARE_ID.test(id)) return new Response(null, { status: 400, headers })
   try {
@@ -46,4 +46,12 @@ export async function GET(request: Request) {
   } catch {
     return new Response(null, { status: 503, headers })
   }
+}
+
+export default {
+  fetch(request: Request) {
+    if (request.method === 'POST') return saveDare(request)
+    if (request.method === 'GET') return loadDare(request)
+    return new Response(null, { status: 405, headers: { ...headers, Allow: 'GET, POST' } })
+  },
 }
