@@ -1,6 +1,7 @@
 import type { Vector } from 'matter-js'
+import type { Foley } from './CartoonAudio'
 import { clamp, INITIAL_HUD } from './model'
-import type { Expression, Hud, Profile, Room } from './model'
+import type { DareStats, Expression, Hud, Profile, Room } from './model'
 
 const COMBO_MS = 1400
 const ROASTS = {
@@ -14,7 +15,7 @@ type ParticleKind = 'cotton' | 'confetti' | 'heart' | 'coin' | 'spark'
 type Particle = {
   kind: ParticleKind
   x: number; y: number; vx: number; vy: number
-  size: number; age: number; life: number; spin: number; color: string; value: number
+  size: number; age: number; life: number; spin: number; color: string; value: number; combo: number
 }
 type Callout = { text: string; x: number; y: number; age: number; accent: boolean }
 
@@ -35,18 +36,28 @@ export class GameDirector {
   private lastImpact = -1000
   private lineIndex = 0
   private holdCoinsUntil = 0
+  private damageDealt = 0
+  private maxCombo = 0
+  private destroyed = false
+  private roast: { text: string; priority: number } | null = null
 
-  constructor(private profile: Profile) {}
+  constructor(private profile: Profile, readonly sound: (event: Foley) => void) {}
+
+  scorecard(): DareStats {
+    return { damage: this.damageDealt, maxCombo: this.maxCombo, coins: this.hud.coins, roast: this.roast?.text ?? '', destroyed: this.destroyed }
+  }
 
   setProfile(profile: Profile) {
+    if (profile.name !== this.profile.name || profile.face !== this.profile.face) this.roast = null
     this.profile = profile
   }
 
   private speak(reason: keyof typeof ROASTS) {
-    const choices = this.profile.roasts.length > 0 && this.lineIndex % 2 === 1
-      ? this.profile.roasts
-      : ROASTS[reason]
+    const custom = this.profile.roasts.length > 0 && this.lineIndex % 2 === 1
+    const choices = custom ? this.profile.roasts : ROASTS[reason]
     this.speech = { text: choices[this.lineIndex % choices.length] ?? ROASTS[reason][0] ?? '', until: this.now + 2250 }
+    const priority = (custom ? 3 : 0) + ({ idle: 0, grab: 1, slam: 2, combo: 3 }[reason])
+    if (priority >= (this.roast?.priority ?? -1)) this.roast = { text: this.speech.text, priority }
     this.lineIndex++
   }
 
@@ -60,6 +71,7 @@ export class GameDirector {
     this.lastPet = this.now
     this.lastAction = this.now
     this.hud.mood = 'Happy'
+    this.sound({ kind: 'pet' })
     this.burst('heart', point, 2)
     if (++this.petCount % 4 === 0) {
       this.coins(point, 3, 1)
@@ -74,9 +86,12 @@ export class GameDirector {
     const heavy = speed >= 11
     const critical = speed >= 23
     this.hud.combo = this.now < this.comboUntil ? this.hud.combo + 1 : 1
+    this.maxCombo = Math.max(this.maxCombo, this.hud.combo)
     this.comboUntil = this.now + COMBO_MS
     const damage = Math.round(clamp(speed * 1.25 - 2, 2, 41) * damageScale)
+    this.damageDealt += Math.min(this.hud.integrity, damage)
     this.hud.integrity = Math.max(0, this.hud.integrity - damage)
+    if (damageScale >= 0.5) this.sound({ kind: 'impact', speed })
     this.hud.mood = critical ? 'Dizzy' : 'Rattled'
     this.expression = {
       kind: critical ? (this.hud.combo % 2 ? 'stars' : 'spirals') : heavy ? 'shock' : 'sweat',
@@ -123,6 +138,7 @@ export class GameDirector {
   }
 
   pop(point: Vector) {
+    this.destroyed = true
     this.burst('cotton', point, 54)
     this.burst('confetti', point, 34)
     this.callouts.push({ text: 'POP!', x: point.x, y: point.y - 36, age: 0, accent: false })
@@ -191,6 +207,7 @@ export class GameDirector {
       }
       if (p.age >= p.life) {
         this.hud.coins += p.value
+        if (p.value > 0) this.sound({ kind: 'coin', combo: p.combo })
         this.particles.splice(i, 1)
       }
     }
@@ -216,7 +233,7 @@ export class GameDirector {
         size: kind === 'coin' ? 7 : kind === 'cotton' ? 5 + Math.random() * 10 : 4 + Math.random() * 6,
         age: 0, life: kind === 'coin' ? 1400 : kind === 'spark' ? 390 : 640 + Math.random() * 540,
         spin: Math.random() * Math.PI * 2, color: colors[i % colors.length] ?? '#fff1ce',
-        value: i === 0 ? value : 0,
+        value: i === 0 ? value : 0, combo: this.hud.combo,
       })
     }
   }

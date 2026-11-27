@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent, KeyboardEvent, PointerEvent } from 'react'
-import { clamp } from '../engine/model'
+import { clamp, isOutfit, OUTFITS } from '../engine/model'
 import type { Profile } from '../engine/model'
 import { Icon } from './Icon'
 
@@ -46,6 +46,7 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
   const [name, setName] = useState(profile.name)
   const [roasts, setRoasts] = useState(profile.roasts.join('\n'))
   const [blend, setBlend] = useState(profile.blend)
+  const [outfit, setOutfit] = useState(profile.outfit)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -169,7 +170,7 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
       cropped = output.toDataURL('image/webp', 0.91)
     }
     onSave({
-      face: cropped, blend, name: name.trim() || 'Buddy',
+      face: cropped, blend, outfit, name: name.trim() || 'Buddy',
       roasts: roasts.split(/\r?\n/).map(line => line.trim().slice(0, 85)).filter(Boolean).slice(0, 8),
     })
   }
@@ -226,6 +227,13 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
                 setDirtyCrop(true)
                 if (image) setOffset(cropBounds(image, value, offset).offset)
               }} />
+            </label>
+            <label className="field outfit-field">Outfit color
+              <select value={outfit} onChange={event => {
+                if (isOutfit(event.target.value)) setOutfit(event.target.value)
+              }}>
+                {Object.entries(OUTFITS).map(([id, item]) => <option key={id} value={id}>{item.label}</option>)}
+              </select>
             </label>
             <label className="check-field"><input type="checkbox" checked={blend} onChange={event => setBlend(event.target.checked)} /> Burlap Fabric Blend</label>
           </section>

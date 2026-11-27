@@ -3,11 +3,15 @@ import { FaceCropModal } from './components/FaceCropModal'
 import { GadgetDock } from './components/GadgetDock'
 import { Icon } from './components/Icon'
 import { RoomModifiersBar } from './components/RoomModifiersBar'
+import { CONTROLS_POPOVER_ID, StudioExports } from './components/StudioExports'
+import { CartoonAudio } from './engine/CartoonAudio'
 import { RagdollEngine } from './engine/RagdollEngine'
 import { TOOLS } from './engine/gadgetModel'
 import type { GravityMode, Tool } from './engine/gadgetModel'
-import { DEFAULT_PROFILE, INITIAL_HUD } from './engine/model'
+import { DEFAULT_PROFILE, INITIAL_HUD, profileFrom } from './engine/model'
 import type { Profile } from './engine/model'
+import { canRecordClip, createScorecard, downloadDare, recordDareClip } from './utils/dareExport'
+import { copyDareLink, readDare } from './utils/dareShare'
 
 const PROFILE_KEY = 'jute-room:friend:v1'
 
@@ -16,15 +20,7 @@ function readProfile(): Profile {
     const raw = localStorage.getItem(PROFILE_KEY)
     if (!raw) return DEFAULT_PROFILE
     const data: unknown = JSON.parse(raw)
-    if (typeof data !== 'object' || data === null) return DEFAULT_PROFILE
-    return {
-      name: 'name' in data && typeof data.name === 'string' ? data.name.trim().slice(0, 24) || DEFAULT_PROFILE.name : DEFAULT_PROFILE.name,
-      face: 'face' in data && typeof data.face === 'string' && /^data:image\/(webp|png);base64,/.test(data.face) ? data.face : null,
-      roasts: 'roasts' in data && Array.isArray(data.roasts)
-        ? data.roasts.filter((line: unknown): line is string => typeof line === 'string').map(line => line.trim().slice(0, 85)).filter(Boolean).slice(0, 8)
-        : [],
-      blend: !('blend' in data) || data.blend !== false,
-    }
+    return profileFrom(data) ?? DEFAULT_PROFILE
   } catch {
     return DEFAULT_PROFILE
   }
@@ -39,18 +35,59 @@ export default function App() {
   const [glove, setGlove] = useState(false)
   const [gravity, setGravity] = useState<GravityMode>('normal')
   const [bumpers, setBumpers] = useState(false)
+  const [dareMode, setDareMode] = useState(false)
+  const [hudHidden, setHudHidden] = useState(false)
+  const [muted, setMuted] = useState(false)
+  const [recording, setRecording] = useState<number | null>(null)
+  const [recordSupported] = useState(() => canRecordClip() && typeof AudioContext !== 'undefined')
+  const [copying, setCopying] = useState(false)
+  const [makingPoster, setMakingPoster] = useState(false)
+  const [toast, setToast] = useState('')
   const canvas = useRef<HTMLCanvasElement>(null)
   const coin = useRef<HTMLDivElement>(null)
   const engine = useRef<RagdollEngine | null>(null)
   const swap = useRef<HTMLButtonElement>(null)
+  const audio = useRef<CartoonAudio | null>(null)
+  const lifecycle = useRef<AbortController | null>(null)
+  const toastTimer = useRef(0)
+  const clipInFlight = useRef(false)
 
   useEffect(() => {
     if (!canvas.current || !coin.current) return
-    const room = new RagdollEngine(canvas.current, coin.current, initialProfile.current, setHud)
+    const sound = new CartoonAudio()
+    const life = new AbortController()
+    const { signal } = life
+    const room = new RagdollEngine(canvas.current, coin.current, initialProfile.current, setHud, sound.play)
     engine.current = room
+    audio.current = sound
+    lifecycle.current = life
+    const unlock = (event: Event) => {
+      if (event instanceof PointerEvent && event.type === 'pointerdown' && event.pointerType !== 'mouse') return
+      if (event.isTrusted && !sound.ready) void sound.unlock()
+    }
+    window.addEventListener('pointerdown', unlock, { signal, capture: true })
+    window.addEventListener('pointerup', unlock, { signal, capture: true })
+    window.addEventListener('keydown', unlock, { signal, capture: true })
+    let current = 0
+    const hydrate = async () => {
+      const id = ++current
+      const dare = await readDare(window.location.hash)
+      if (signal.aborted || id !== current) return
+      const next = dare ?? readProfile()
+      setDareMode(Boolean(dare))
+      setProfile(next)
+      room.setProfile(next)
+    }
+    if (window.location.hash.startsWith('#dare=')) void hydrate()
+    window.addEventListener('hashchange', () => { void hydrate() }, { signal })
     return () => {
+      life.abort()
+      window.clearTimeout(toastTimer.current)
       room.destroy()
+      sound.destroy()
       engine.current = null
+      audio.current = null
+      lifecycle.current = null
     }
   }, [])
 
@@ -61,12 +98,87 @@ export default function App() {
       const key = event.key.toLowerCase()
       if (key === 'r') engine.current?.reset()
       if (key === 'c') clearRoom()
+      if (key === 'h') toggleHud()
+      if (key === '?') document.getElementById(CONTROLS_POPOVER_ID)?.togglePopover?.()
       const selected = /^[1-8]$/.test(key) ? TOOLS[Number(key) - 1] : undefined
       if (selected) selectTool(selected)
     }
     window.addEventListener('keydown', keydown)
     return () => window.removeEventListener('keydown', keydown)
   }, [editing])
+
+  function toggleHud() {
+    document.getElementById(CONTROLS_POPOVER_ID)?.hidePopover?.()
+    setHudHidden(hidden => !hidden)
+  }
+
+  function announce(message: string) {
+    window.clearTimeout(toastTimer.current)
+    setToast(message)
+    toastTimer.current = window.setTimeout(() => setToast(''), 3100)
+  }
+
+  async function copyDare() {
+    const signal = lifecycle.current?.signal
+    if (!signal || copying) return
+    setCopying(true)
+    try {
+      const { photoOmitted } = await copyDareLink(profile)
+      if (!signal.aborted) announce(photoOmitted ? 'Dare link copied without the photo' : 'Dare link copied')
+    } catch {
+      if (!signal.aborted) announce('Clipboard unavailable. Try again in a secure browser tab.')
+    } finally {
+      if (!signal.aborted) setCopying(false)
+    }
+  }
+
+  async function record() {
+    const signal = lifecycle.current?.signal
+    const sound = audio.current
+    const scene = canvas.current
+    const room = engine.current
+    if (!signal || !sound || !scene || !room || clipInFlight.current) return
+    clipInFlight.current = true
+    setRecording(5)
+    try {
+      if (!await sound.unlock()) throw new Error('Studio sound could not start')
+      if (signal.aborted) return
+      const track = sound.recordingTrack()
+      if (!track) throw new Error('The recording audio track is unavailable')
+      room.setCapturing(true)
+      const blob = await recordDareClip(scene, track, setRecording, signal)
+      if (!signal.aborted) {
+        downloadDare(blob, profile.name, 'clip')
+        announce('Clip downloaded')
+      }
+    } catch {
+      if (!signal.aborted) announce('Couldn’t record this clip in this browser')
+    } finally {
+      clipInFlight.current = false
+      if (!signal.aborted) {
+        room.setCapturing(false)
+        setRecording(null)
+      }
+    }
+  }
+
+  async function exportPoster() {
+    const stats = engine.current?.scorecard()
+    const signal = lifecycle.current?.signal
+    if (!stats || !signal || makingPoster) return
+    setMakingPoster(true)
+    try {
+      const poster = await createScorecard(profile, stats)
+      if (!signal.aborted) {
+        downloadDare(poster, profile.name, 'scorecard')
+        announce('Damage report downloaded')
+      }
+    } catch {
+      if (!signal.aborted) announce('Couldn’t export the damage report')
+    } finally {
+      if (!signal.aborted) setMakingPoster(false)
+    }
+  }
 
   function selectTool(next: Tool) {
     setTool(next)
@@ -93,7 +205,7 @@ export default function App() {
   }
 
   return (
-    <main className="playroom">
+    <main className="playroom" data-hud-hidden={hudHidden}>
       <canvas ref={canvas} className="studio" aria-label="Interactive ragdoll studio" aria-describedby="play-instructions" tabIndex={0} />
       <header className="studio-bar">
         <div className="brand">
@@ -118,6 +230,12 @@ export default function App() {
           </button>
         </div>
       </header>
+      <StudioExports muted={muted} recording={recording} canRecord={recordSupported} copying={copying} makingPoster={makingPoster}
+        onMute={() => {
+          audio.current?.setMuted(!muted)
+          setMuted(!muted)
+        }}
+        onCopy={() => { void copyDare() }} onRecord={() => { void record() }} onPoster={() => { void exportPoster() }} onHide={toggleHud} />
       <RoomModifiersBar gravity={gravity} bumpers={bumpers} quake={hud.quake}
         onGravity={() => {
           const next = gravity === 'normal' ? 'moon' : gravity === 'moon' ? 'zero' : 'normal'
@@ -133,12 +251,15 @@ export default function App() {
         <div><span>Stitch integrity</span><strong>{hud.integrity}%</strong></div>
         <meter min={0} max={100} value={hud.integrity} aria-label="Stitch integrity" />
       </aside>
+      {dareMode && <span className="dare-mode">Dare mode active</span>}
       <footer className="studio-footer">
         <GadgetDock tool={tool} onSelect={selectTool} hud={hud} glove={glove} onToggleGlove={() => {
           setGlove(!glove)
           engine.current?.setGlovePrimary(!glove)
         }} />
       </footer>
+      {hudHidden && <button type="button" className="control show-hud" onClick={toggleHud} aria-keyshortcuts="H">Show HUD <kbd>H</kbd></button>}
+      <div className="studio-toast" role="status">{toast}</div>
       {editing && <FaceCropModal profile={profile} onClose={closeCustomizer} onSave={saveProfile} />}
     </main>
   )

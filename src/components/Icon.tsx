@@ -22,6 +22,11 @@ const glyphs = {
   quake: <path d="M2 12h5l2-6 4 12 3-6h6" />,
   bumpers: <><circle cx="6" cy="15" r="3"/><circle cx="18" cy="15" r="3"/><circle cx="12" cy="7" r="3"/></>,
   wash: <><path d="m8 8 4-5 4 5 1 5a5 5 0 1 1-10 0l1-5Z"/><path d="M20 4v4m-2-2h4M3 10v4m-2-2h4"/></>,
+  sound: <><path d="M4 9h4l5-4v14l-5-4H4V9Z"/><path d="M16 9a4 4 0 0 1 0 6m2.5-8.5a7.5 7.5 0 0 1 0 11"/></>,
+  mute: <><path d="M4 9h4l5-4v14l-5-4H4V9Z"/><path d="m16 10 5 5m0-5-5 5"/></>,
+  link: <><path d="M10 13a4 4 0 0 0 6 0l3-3a4 4 0 0 0-6-6l-2 2"/><path d="M14 11a4 4 0 0 0-6 0l-3 3a4 4 0 0 0 6 6l2-2"/></>,
+  clip: <><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3V9Z"/></>,
+  report: <><path d="M6 3h8l4 4v14H6V3Zm8 0v5h4M9 12h6m-6 4h6"/></>,
 } satisfies Record<string, ReactNode>
 
 export function Icon({ name, size = 19 }: { name: keyof typeof glyphs; size?: number }) {

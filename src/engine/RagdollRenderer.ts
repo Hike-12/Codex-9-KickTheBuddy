@@ -1,7 +1,7 @@
 import type { Vector } from 'matter-js'
 import type { GameDirector } from './GameDirector'
-import { clamp } from './model'
-import type { Limb, Profile, Room, Surface } from './model'
+import { DEFAULT_PROFILE, OUTFITS, clamp } from './model'
+import type { Limb, Outfit, Profile, Room, Surface } from './model'
 
 import { ellipse, line, path, shape } from './canvasDraw'
 import type { Pen } from './canvasDraw'
@@ -90,7 +90,10 @@ export class RagdollRenderer {
   private gadgetArt = new GadgetRenderer()
   private limbs = new Map<string, HTMLCanvasElement>()
   private photo: HTMLCanvasElement | null = null
+  private stitched = new Map<boolean, HTMLCanvasElement>()
+  private bubble: { message: string; canvas: HTMLCanvasElement; width: number; height: number } | null = null
   private faceRequest = 0
+  private outfit: Outfit = DEFAULT_PROFILE.outfit
   private scale = 1
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -104,6 +107,7 @@ export class RagdollRenderer {
   }
 
   setProfile(profile: Profile) {
+    this.outfit = profile.outfit
     const request = ++this.faceRequest
     if (!profile.face) {
       this.photo = null
@@ -292,7 +296,7 @@ export class RagdollRenderer {
 
   private sprite(limb: Limb) {
     const { width: w, height: h, radius, surface } = limb
-    const key = surface + ':' + w + ':' + h
+    const key = surface + ':' + w + ':' + h + (surface === 'denim' || surface === 'pelvis' ? ':' + this.outfit : '')
     const found = this.limbs.get(key)
     if (found) return found
     const { ctx, canvas } = buffer((w + 16) * 2, (h + 16) * 2)
@@ -301,10 +305,11 @@ export class RagdollRenderer {
     const left = -w / 2
     const top = -h / 2
     const cloth = ctx.createLinearGradient(left, top, w / 2, h / 2)
-    const palette: Record<Surface, [string, string, string]> = {
+    const outfit = OUTFITS[this.outfit]
+    const palette: Record<Surface, readonly [string, string, string]> = {
       head: ['#e8bc78', '#c79754', '#775032'],
-      denim: ['#748379', '#55665e', '#344640'],
-      pelvis: ['#8c8b68', '#656e55', '#394237'],
+      denim: outfit.denim,
+      pelvis: outfit.pelvis,
       hand: ['#dfb274', '#bb8c50', '#715033'],
       boot: ['#bc925c', '#936640', '#543721'],
       burlap: ['#ddae72', '#b98b52', '#735136'],
@@ -334,7 +339,7 @@ export class RagdollRenderer {
 
     if (surface === 'denim') {
       path(ctx, -23, -22, 46, 41, 6)
-      ctx.fillStyle = '#354e4a'
+      ctx.fillStyle = this.outfit === 'studio' ? '#354e4a' : outfit.denim[2]
       ctx.fill()
       ctx.strokeStyle = '#aaaf87'
       ctx.setLineDash([2, 2])
@@ -361,14 +366,20 @@ export class RagdollRenderer {
   draw(room: Room, limbs: Limb[], head: Limb | null, game: GameDirector, drag: Drag | null, suspended: boolean, reduceMotion: boolean, gadgets: GadgetSystem) {
     const ctx = this.ctx
     ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.drawImage(this.backdrop.canvas, 0, 0)
-    ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0)
+    let dx = 0
+    let dy = 0
     const shake = game.shake
     if (!reduceMotion && shake.until > game.now) {
       const power = shake.strength * ((shake.until - game.now) / 230) * Math.cos(game.now / 13)
-      ctx.translate(shake.x * power + shake.y * power * 0.25, shake.y * power + shake.x * power * 0.25)
-      ctx.drawImage(this.backdrop.canvas, 0, 0, room.width, room.height)
+      dx = Math.round((shake.x + shake.y * 0.25) * power * this.scale)
+      dy = Math.round((shake.y + shake.x * 0.25) * power * this.scale)
+      const { width, height } = this.canvas
+      ctx.fillStyle = '#2e211a'
+      if (dx) ctx.fillRect(dx > 0 ? 0 : width + dx, 0, Math.abs(dx), height)
+      if (dy) ctx.fillRect(0, dy > 0 ? 0 : height + dy, width, Math.abs(dy))
     }
+    ctx.drawImage(this.backdrop.canvas, dx, dy)
+    ctx.setTransform(this.scale, 0, 0, this.scale, dx, dy)
 
     this.gadgetArt.backdrop(ctx, room, gadgets)
     if (head) {
@@ -500,31 +511,39 @@ export class RagdollRenderer {
     ctx.restore()
   }
 
+  private stitchedFace(happy: boolean) {
+    const cached = this.stitched.get(happy)
+    if (cached) return cached
+    const { canvas, ctx } = buffer(172, 120)
+    ctx.setTransform(2, 0, 0, 2, 86, 60)
+    for (const x of [-24, 23]) {
+      const y = x < 0 ? -8 : -5
+      ellipse(ctx, x + 1, y + 1, 10.5, 10.5, '#664526')
+      ellipse(ctx, x, y, 9.5, 9.5, '#362c24')
+      ellipse(ctx, x - 2, y - 2, 6.5, 6.2, '#4b3e31')
+      line(ctx, x - 3, y - 3, x + 3, y + 3, '#d8b58a', 1.6)
+      line(ctx, x + 3, y - 3, x - 3, y + 3, '#d8b58a', 1.6)
+    }
+    ctx.beginPath()
+    ctx.moveTo(-17, 14)
+    ctx.quadraticCurveTo(0, happy ? 34 : 27, 19, 12)
+    ctx.lineWidth = 2.2
+    ctx.strokeStyle = '#4c3424'
+    ctx.stroke()
+    for (const [x, y] of [[-14, 16], [-8, 20], [0, 21], [8, 19], [15, 15]] as const) {
+      line(ctx, x - 1, y - 2.5, x + 1, y + 2.5, '#63412a')
+    }
+    ellipse(ctx, -34, 10, 6, 2.5, '#d082555c')
+    ellipse(ctx, 33, 9, 6, 2.5, '#d082555c')
+    this.stitched.set(happy, canvas)
+    return canvas
+  }
+
   private face(game: GameDirector) {
     const ctx = this.ctx
     const mode = game.expression?.kind
     if (this.photo) ctx.drawImage(this.photo, -39, -39, 78, 78)
-    else {
-      for (const x of [-24, 23]) {
-        const y = x < 0 ? -8 : -5
-        ellipse(ctx, x + 1, y + 1, 10.5, 10.5, '#664526')
-        ellipse(ctx, x, y, 9.5, 9.5, '#362c24')
-        ellipse(ctx, x - 2, y - 2, 6.5, 6.2, '#4b3e31')
-        line(ctx, x - 3, y - 3, x + 3, y + 3, '#d8b58a', 1.6)
-        line(ctx, x + 3, y - 3, x - 3, y + 3, '#d8b58a', 1.6)
-      }
-      ctx.beginPath()
-      ctx.moveTo(-17, 14)
-      ctx.quadraticCurveTo(0, game.hud.mood === 'Happy' ? 34 : 27, 19, 12)
-      ctx.lineWidth = 2.2
-      ctx.strokeStyle = '#4c3424'
-      ctx.stroke()
-      for (const [x, y] of [[-14, 16], [-8, 20], [0, 21], [8, 19], [15, 15]] as const) {
-        line(ctx, x - 1, y - 2.5, x + 1, y + 2.5, '#63412a')
-      }
-      ellipse(ctx, -34, 10, 6, 2.5, '#d082555c')
-      ellipse(ctx, 33, 9, 6, 2.5, '#d082555c')
-    }
+    else ctx.drawImage(this.stitchedFace(game.hud.mood === 'Happy'), -43, -30, 86, 60)
 
     if (mode === 'stars') {
       for (const x of [-24, 23]) star(ctx, x, -6, 13, game.now / 90 + x, '#ffd060')
@@ -562,7 +581,8 @@ export class RagdollRenderer {
     }
   }
 
-  private speech(room: Room, limb: Limb, message: string, remaining: number) {
+  private speechBubble(message: string) {
+    if (this.bubble?.message === message) return this.bubble
     const ctx = this.ctx
     ctx.save()
     ctx.font = '750 20px system-ui'
@@ -581,32 +601,48 @@ export class RagdollRenderer {
     if (lines.length > 3) visible[2] = (visible[2] ?? '').slice(0, 18) + '…'
     const w = Math.max(...visible.map(text => ctx.measureText(text).width), 38) + 32
     const h = 22 + visible.length * 24
+    ctx.restore()
+
+    const { canvas, ctx: bubble } = buffer(Math.ceil((w + 6) * 2), (h + 8) * 2)
+    bubble.setTransform(2, 0, 0, 2, 2, 2)
+    path(bubble, 2, 4, w, h, 9)
+    bubble.fillStyle = '#30231888'
+    bubble.fill()
+    path(bubble, 0, 0, w, h, 9)
+    bubble.fillStyle = '#fae8c7'
+    bubble.strokeStyle = '#4a3324'
+    bubble.lineWidth = 2
+    bubble.fill()
+    bubble.stroke()
+    bubble.fillStyle = '#36261e'
+    bubble.textAlign = 'center'
+    bubble.textBaseline = 'middle'
+    bubble.font = '750 20px system-ui'
+    visible.forEach((text, i) => bubble.fillText(text, w / 2, 22 + i * 24))
+    const art = { message, canvas, width: w, height: h }
+    this.bubble = art
+    return art
+  }
+
+  private speech(room: Room, limb: Limb, message: string, remaining: number) {
+    const ctx = this.ctx
+    const { canvas, width: w, height: h } = this.speechBubble(message)
     const { x: anchorX, y: anchorY } = limb.body.position
     const x = clamp(anchorX - w / 2, room.left + 8, room.right - w - 8)
     const above = anchorY - h - 62 > room.ceiling
     const y = above ? Math.min(room.floor - h - 16, anchorY - h - 62) : Math.min(room.floor - h - 10, anchorY + 57)
     const tip = clamp(anchorX, x + 16, x + w - 16)
     const edge = y + (above ? h - 2 : 2)
-    ctx.globalAlpha = Math.min(1, remaining / 210)
-    path(ctx, x, y, w, h, 9)
-    ctx.fillStyle = '#30231888'
     ctx.save()
-    ctx.translate(2, 4)
-    ctx.fill()
-    ctx.restore()
+    ctx.globalAlpha = Math.min(1, remaining / 210)
+    ctx.drawImage(canvas, x - 1, y - 1, canvas.width / 2, canvas.height / 2)
     ctx.fillStyle = '#fae8c7'
     ctx.strokeStyle = '#4a3324'
     ctx.lineWidth = 2
-    ctx.fill()
-    ctx.stroke()
     shape(ctx, [{ x: tip - 7, y: edge }, { x: tip + 8, y: edge }, { x: tip - 3, y: edge + (above ? 13 : -13) }])
     ctx.fill()
     ctx.stroke()
     line(ctx, tip - 6, edge, tip + 7, edge, '#fae8c7', 2)
-    ctx.fillStyle = '#36261e'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    visible.forEach((text, i) => ctx.fillText(text, x + w / 2, y + 22 + i * 24))
     ctx.restore()
   }
 }

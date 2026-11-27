@@ -80,6 +80,7 @@ export class GadgetSystem {
   private nextQuake = 0
   private shotIndex = 0
   private impactAt = -1000
+  private clangAt = -1000
   private thawAt: Vector | null = null
   private decalIndex = 0
   private rebounds: Array<{ body: RigidBody; normal: Vector; power: number }> = []
@@ -165,6 +166,7 @@ export class GadgetSystem {
     if (!cursor) return
     this.held = true
     this.nextShot = this.now
+    if (this.tool === 'vortex' || this.tool === 'freeze') this.director.sound({ kind: 'loop', loop: this.tool, active: true })
     if (this.tool === 'impact') {
       if (alternate) this.punch(cursor)
       else this.dropAnvil(cursor.x)
@@ -178,6 +180,9 @@ export class GadgetSystem {
   }
 
   release(detonate: boolean) {
+    if (this.held && (this.tool === 'vortex' || this.tool === 'freeze')) {
+      this.director.sound({ kind: 'loop', loop: this.tool, active: false })
+    }
     if (detonate && this.held && this.tool === 'vortex' && this.cursor) {
       const point = this.cursor
       this.shock = { point, time: this.now }
@@ -195,12 +200,14 @@ export class GadgetSystem {
         return { x: direction.x * 37 + vx * 0.2, y: direction.y * 37 + vy * 0.2 }
       })
       this.director.rattle({ x: 0.8, y: 0.6 }, 13)
+      this.director.sound({ kind: 'shockwave' })
     }
     this.held = false
   }
 
   resetDoll() {
     if (this.ice) this.thaw(false)
+    if (this.attachments.length) this.director.sound({ kind: 'pop' })
     this.attachments.length = 0
     this.freezeProgress = 0
     this.thawAt = null
@@ -289,6 +296,7 @@ export class GadgetSystem {
     const from = { x: side > 0 ? this.room.left + 3 : this.room.right - 3, y: clamp(point.y, this.room.ceiling + 28, this.room.floor - 28) }
     const to = this.bounds({ x: point.x + side * 19, y: point.y }, 26)
     this.glove = { from, to, point: from, angle: Vec.angle(from, to), born: this.now, hit: false }
+    this.director.sound({ kind: 'punch' })
   }
 
   private fireHeld() {
@@ -366,6 +374,7 @@ export class GadgetSystem {
       kind, color, seed: this.decalIndex++ % 4, born: this.now,
       size: kind === 'egg' ? 22 : kind === 'foam' ? 9 : 17,
     })
+    this.director.sound({ kind: 'splat', egg: kind === 'egg' })
   }
 
   private stick(limb: Limb, shot: Shot, point: Vector, direction: Vector) {
@@ -377,12 +386,16 @@ export class GadgetSystem {
     }
     if (this.attachments.length >= 10) {
       const oldest = this.attachments.shift()
-      if (oldest) this.emitShards(Vec.add(oldest.limb.body.position, Vec.rotate(oldest.offset, oldest.limb.body.angle)), 3)
+      if (oldest) {
+        this.emitShards(Vec.add(oldest.limb.body.position, Vec.rotate(oldest.offset, oldest.limb.body.angle)), 3)
+        this.director.sound({ kind: 'pop' })
+      }
     }
     this.attachments.push({
       limb, offset, angle: Math.atan2(-direction.y, -direction.x) - limb.body.angle, kind: shot.kind,
       wobble: 0, angularSpeed: 0.24,
     })
+    this.director.sound({ kind: 'pop' })
   }
 
   private freezeDoll() {
@@ -441,6 +454,7 @@ export class GadgetSystem {
       this.emitShards(impactPoint, 12)
       this.director.bonus(impactPoint, 18, 'SHATTER')
       this.director.rattle({ x: 0.6, y: -0.8 }, 12)
+      this.director.sound({ kind: 'ice' })
     }
   }
 
@@ -641,6 +655,10 @@ export class GadgetSystem {
     }
     if (anvil) {
       const velocity = Body.getVelocity(anvil)
+      if ((wall || limb || ice === other(anvil)) && Vec.magnitude(velocity) > 7 && this.now - this.clangAt > 115) {
+        this.clangAt = this.now
+        this.director.sound({ kind: 'anvil', speed: Vec.magnitude(velocity) })
+      }
       if (limb && Math.abs(velocity.y) > 9) {
         this.doll.wake()
         this.director.impact(support ?? limb.body.position, Math.min(28, Math.abs(velocity.y) + 5), { x: 0, y: 1 }, 0.84)
@@ -658,6 +676,7 @@ export class GadgetSystem {
     const incoming = -Vec.dot(Body.getVelocity(body), normal)
     if (incoming < 1.5 || this.now < fixture.pulseUntil - 85) return
     fixture.pulseUntil = this.now + 205
+    this.director.sound({ kind: 'boing', speed: incoming })
     this.rebounds.push({ body, normal, power: clamp(incoming * 0.58 + (pad ? 20 : 16), 14, 39) })
     if (limb || body === ice) {
       const point = support ?? body.position
