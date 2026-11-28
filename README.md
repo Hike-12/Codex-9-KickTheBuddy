@@ -40,6 +40,7 @@ Click **Integrity** to choose **Soft**, **Reinforced**, or **Unbreakable**. Rein
 
 - **Swap Face / Roasts** lets you pick a photo or use the front camera on supported devices. Drag to pan and pinch or use the zoom slider to frame the crop. Choose an outfit and write custom roasts. Enable **Use custom roasts only** to show just your lines. An empty list in this mode keeps Buddy quiet. Saving keeps the profile in local browser storage.
 - **Copy Dare Link** saves a snapshot of the friend profile, including the cropped photo, outfit, and custom roasts, and copies a short URL. Anyone with the link can load that snapshot. Older dare links still open, and opening a dare leaves the saved local profile intact.
+- Face uploads accept up to 8 MB and 25 megapixels, with a maximum of 8,192 pixels on either edge. New shared portraits are at most 320 × 320 and 80 KiB. The API accepts at most 112 KiB per share request.
 - **Record 5s Clip** exports the canvas and synthesized audio as WebM or MP4, depending on browser support. Select the countdown to cancel. Capture caps the canvas at about 0.36 megapixels to limit encoding load and restores the normal rendering resolution afterward.
 - On phones, find exports under **Share menu**. When file sharing is supported, tap **Share clip** once the recording is ready to open the system share sheet. Other browsers download the file directly.
 

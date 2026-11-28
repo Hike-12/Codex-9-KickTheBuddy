@@ -12,7 +12,7 @@ import type { GravityMode, Tool } from './engine/gadgetModel'
 import { DEFAULT_HARDNESS, DEFAULT_PROFILE, HARDNESS, INITIAL_HUD, profileFrom } from './engine/model'
 import type { Hardness, Profile } from './engine/model'
 import { canRecordClip, canShareDare, createClipFile, downloadDare, recordDareClip, shareDare } from './utils/dareExport'
-import { copyDareLink, isDareHash, readDare } from './utils/dareShare'
+import { copyDareLink, DareLinkError, isDareHash, readDare } from './utils/dareShare'
 
 const PROFILE_KEY = 'jute-room:friend:v1'
 const HARDNESS_MENU = 'buddy-hardness'
@@ -36,6 +36,7 @@ function readProfile(): Profile {
 export default function App() {
   const [profile, setProfile] = useState(() => isDareHash(window.location.hash) ? DEFAULT_PROFILE : readProfile())
   const initialProfile = useRef(profile)
+  const openedDare = useRef<{ profile: Profile; hash: string } | null>(null)
   const [hud, setHud] = useState(INITIAL_HUD)
   const [hardness, setHardness] = useState<Hardness>(DEFAULT_HARDNESS)
   const [editing, setEditing] = useState(false)
@@ -83,9 +84,11 @@ export default function App() {
       const dare = await readDare(hash, signal)
       if (signal.aborted || id !== current) return
       const next = dare ?? (isDareHash(hash) ? DEFAULT_PROFILE : readProfile())
+      openedDare.current = dare ? { profile: dare, hash } : null
       setDareMode(Boolean(dare))
       setProfile(next)
       room.setProfile(next)
+      if (!dare && isDareHash(hash)) announce('This dare couldn’t load. You can still play the room.')
     }
     if (isDareHash(window.location.hash)) void hydrate()
     window.addEventListener('hashchange', () => { void hydrate() }, { signal })
@@ -162,10 +165,11 @@ export default function App() {
     if (!signal || copying) return
     setCopying(true)
     try {
-      await copyDareLink(profile)
+      const opened = openedDare.current
+      await copyDareLink(profile, opened?.profile === profile && opened.hash === window.location.hash)
       if (!signal.aborted) announce('Dare link copied')
-    } catch {
-      if (!signal.aborted) announce('Couldn?t copy the dare link. Try again.')
+    } catch (error) {
+      if (!signal.aborted) announce(error instanceof DareLinkError ? error.message : 'Couldn’t copy the dare link. Try again.')
     } finally {
       if (!signal.aborted) setCopying(false)
     }

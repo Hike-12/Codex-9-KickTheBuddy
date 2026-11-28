@@ -429,6 +429,7 @@ kbd { font-family: var(--font-ui); }
 .modal-grid { display: grid; grid-template-columns: minmax(0, 228px) minmax(0, 1fr); gap: 24px; padding: 24px; }
 .crop-pane { display: grid; justify-items: center; align-content: start; gap: 12px; }
 .photo-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.photo-limit { margin: 0; color: var(--color-muted); font-size: .8125rem; text-align: center; }
 .photo-actions .camera-button { display: none; }
 @media (any-pointer: coarse) { .photo-actions .camera-button { display: inline-flex; } }
 .crop-ring {

@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent, KeyboardEvent, PointerEvent } from 'react'
 import { clamp, isOutfit, OUTFITS } from '../engine/model'
 import type { Profile } from '../engine/model'
-import { loadFaceImage } from '../utils/dareShare'
+import { encodePortrait, loadFaceImage, PHOTO_UPLOAD_MB, photoDimensionsAllowed, PORTRAIT_EDGE } from '../utils/portrait'
 import { Icon } from './Icon'
 import { OptionPicker } from './OptionPicker'
 
-const SIZE = 320
+const SIZE = PORTRAIT_EDGE
 const MAX_WORKING_EDGE = 2048
 const OUTFIT_OPTIONS = Object.keys(OUTFITS).filter(isOutfit).map(value => ({ value, ...OUTFITS[value] }))
 type Offset = { x: number; y: number }
@@ -28,11 +28,14 @@ async function rasterType(file: File) {
   return null
 }
 
+class OversizedPhoto extends Error {}
+
 async function decode(url: string): Promise<CropImage> {
   const image = await loadFaceImage(url)
   const width = image.naturalWidth
   const height = image.naturalHeight
   if (!width || !height) throw new Error('Empty image')
+  if (!photoDimensionsAllowed(width, height)) throw new OversizedPhoto()
   const ratio = MAX_WORKING_EDGE / Math.max(width, height)
   if (ratio >= 1) return { source: image, width, height }
   const reduced = document.createElement('canvas')
@@ -158,9 +161,9 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
     event.currentTarget.value = ''
     if (!file) return
     const id = ++request.current
-    if (file.size > 12 * 1024 * 1024) {
+    if (file.size > PHOTO_UPLOAD_MB * 1024 * 1024) {
       setLoading(false)
-      setError('Choose a photo under 12 MB.')
+      setError(`Choose a photo up to ${PHOTO_UPLOAD_MB} MB.`)
       return
     }
     setError('')
@@ -173,6 +176,12 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
         setError('Choose a PNG, JPG, WebP, AVIF, or HEIC photo.')
         return
       }
+      if (type === 'image/png' || type === 'image/jpeg' || type === 'image/webp') {
+        const { imageSize } = await import('image-size')
+        const { width, height } = imageSize(new Uint8Array(await file.arrayBuffer()))
+        if (!photoDimensionsAllowed(width, height)) throw new OversizedPhoto()
+      }
+      if (id !== request.current) return
       url = URL.createObjectURL(file.type === type ? file : new Blob([file], { type }))
       const selected = await decode(url)
       if (id !== request.current) return
@@ -180,8 +189,10 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
       setDirtyCrop(true)
       points.current.clear()
       setCrop(INITIAL_CROP)
-    } catch {
-      if (id === request.current) setError('This image could not be opened. Try another file.')
+    } catch (problem) {
+      if (id === request.current) setError(problem instanceof OversizedPhoto
+        ? 'Choose a photo up to 25 megapixels and 8,192 pixels on either edge.'
+        : 'This image could not be opened. Try another file.')
     } finally {
       if (url) URL.revokeObjectURL(url)
       if (id === request.current) setLoading(false)
@@ -243,7 +254,7 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
       if (!ctx) return
       try {
         drawCrop(ctx, image, zoom, offset)
-        cropped = output.toDataURL('image/webp', 0.91)
+        cropped = encodePortrait(output)
       } catch {
         setError('Couldn’t save this crop. Try another photo.')
         return
@@ -292,6 +303,7 @@ export function FaceCropModal({ profile, onClose, onSave }: { profile: Profile; 
                 <input type="file" accept="image/*" capture="user" onChange={event => { void selectFile(event) }} />
               </label>
             </div>
+            <p className="photo-limit">Up to {PHOTO_UPLOAD_MB} MB and 25 megapixels</p>
             {(image || face) && <button className="text-btn" type="button" onClick={() => {
               request.current++
               setFace(null); setImage(null); setDirtyCrop(false); setLoading(false)

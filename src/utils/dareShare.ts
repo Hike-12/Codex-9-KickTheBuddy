@@ -1,17 +1,15 @@
 import { profileFrom } from '../engine/model'
 import type { Profile } from '../engine/model'
 import { DARE_API, DARE_ID, SHORT_DARE_PREFIX } from './dareLink'
+import { portraitForSharing } from './portrait'
 
 const LEGACY_PREFIX = '#dare='
 const URL_LIMIT = 6000
 const BODY_LIMIT = 12000
 
-export async function loadFaceImage(source: string) {
-  const image = new Image()
-  image.src = source
-  await image.decode()
-  return image
-}
+let lastLink: { profile: Profile; url: Promise<string> } | undefined
+
+export class DareLinkError extends Error {}
 
 async function uncompress(bytes: Uint8Array<ArrayBuffer>) {
   const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate')).getReader()
@@ -63,25 +61,34 @@ export async function readDare(hash: string, signal?: AbortSignal): Promise<Prof
   }
 }
 
-export async function createDareLink(profile: Profile, location: string) {
+async function createDareLink(profile: Profile, location: string, reuseShort: boolean) {
   const url = new URL(location)
+  url.search = ''
+  if (reuseShort && url.hash.startsWith(SHORT_DARE_PREFIX)) return url.href
+  const face = profile.face ? await portraitForSharing(profile.face) : null
   const response = await fetch(DARE_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(profile),
+    body: JSON.stringify({ ...profile, face }),
   })
-  if (!response.ok) throw new Error('The dare link could not be saved')
+  if (response.status === 429) throw new DareLinkError('Too many dare links. Wait a few minutes and try again.')
+  if (!response.ok) throw new DareLinkError('Dare links are unavailable right now. The room is still playable.')
   const result: unknown = await response.json()
   if (typeof result !== 'object' || !result || !('id' in result) || typeof result.id !== 'string' || !DARE_ID.test(result.id)) {
     throw new Error('The dare service returned an invalid link')
   }
-  url.search = ''
   url.hash = SHORT_DARE_PREFIX + result.id
   return url.href
 }
 
-export async function copyDareLink(profile: Profile) {
-  const result = createDareLink(profile, window.location.href)
+export async function copyDareLink(profile: Profile, reuseShort: boolean) {
+  let cached = lastLink
+  if (cached?.profile !== profile) {
+    const current = { profile, url: createDareLink(profile, window.location.href, reuseShort) }
+    cached = lastLink = current
+    void current.url.catch(() => { if (lastLink === current) lastLink = undefined })
+  }
+  const result = cached.url
   const clipboard = navigator.clipboard
   if (clipboard?.write && typeof ClipboardItem !== 'undefined') {
     try {
