@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Analytics, type BeforeSend } from '@vercel/analytics/react'
 import { FaceCropModal } from './components/FaceCropModal'
 import { GadgetDock } from './components/GadgetDock'
 import { Icon } from './components/Icon'
@@ -15,6 +16,12 @@ import { canRecordClip, canShareDare, createClipFile, downloadDare, recordDareCl
 import { copyDareLink, DareLinkError, isDareHash, readDare } from './utils/dareShare'
 
 const PROFILE_KEY = 'jute-room:friend:v1'
+let sentPlayView = false
+const playView: BeforeSend = event => {
+  if (event.type !== 'pageview' || sentPlayView) return null
+  sentPlayView = true
+  return { ...event, url: window.location.origin + window.location.pathname }
+}
 const HARDNESS_MENU = 'buddy-hardness'
 const HARDNESS_OPTIONS = (['soft', 'reinforced', 'unbreakable'] as const).map(value => ({ value, label: HARDNESS[value].label }))
 
@@ -38,6 +45,7 @@ export default function App() {
   const initialProfile = useRef(profile)
   const openedDare = useRef<{ profile: Profile; hash: string } | null>(null)
   const [hud, setHud] = useState(INITIAL_HUD)
+  const [hasPlayed, setHasPlayed] = useState(false)
   const [hardness, setHardness] = useState<Hardness>(DEFAULT_HARDNESS)
   const [editing, setEditing] = useState(false)
   const [tool, setTool] = useState<Tool>('grab')
@@ -66,7 +74,7 @@ export default function App() {
     const sound = new CartoonAudio()
     const life = new AbortController()
     const { signal } = life
-    const room = new RagdollEngine(canvas.current, initialProfile.current, setHud, sound.play)
+    const room = new RagdollEngine(canvas.current, initialProfile.current, setHud, sound.play, () => setHasPlayed(true))
     engine.current = room
     audio.current = sound
     lifecycle.current = life
@@ -301,6 +309,7 @@ export default function App() {
       {hudHidden && <button type="button" className="control show-hud" onClick={toggleHud} aria-keyshortcuts="H">Show HUD <kbd>H</kbd></button>}
       <div className="studio-toast" role="status">{toast}</div>
       {editing && <FaceCropModal profile={profile} onClose={closeCustomizer} onSave={saveProfile} />}
+      {hasPlayed && import.meta.env.PROD && <Analytics beforeSend={playView} />}
     </main>
   )
 }

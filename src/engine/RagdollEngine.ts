@@ -75,7 +75,8 @@ export class RagdollEngine {
   private capturing = false
   private pixelRatio = 1
 
-  constructor(private canvas: HTMLCanvasElement, profile: Profile, private onHud: (hud: Hud) => void, sound: (event: Foley) => void) {
+  constructor(private canvas: HTMLCanvasElement, profile: Profile, private onHud: (hud: Hud) => void,
+    sound: (event: Foley) => void, private onFirstPlay?: () => void) {
     this.renderer = new RagdollRenderer(canvas)
     this.director = new GameDirector(profile, sound)
     this.gadgets = new GadgetSystem(this.engine, this.director, {
@@ -324,6 +325,7 @@ export class RagdollEngine {
       this.gadgetPointer = event.pointerId
       this.canvas.setPointerCapture(event.pointerId)
       this.gadgets.press(point, this.glovePrimary || event.shiftKey || event.button === 2)
+      this.markFirstPlay(event)
       return
     }
     if (event.button !== 0) return
@@ -332,6 +334,14 @@ export class RagdollEngine {
     this.pointer = { id: event.pointerId, point, velocity: zero(), time: event.timeStamp, pending: event.pointerType === 'touch' ? body : null }
     this.canvas.setPointerCapture(event.pointerId)
     if (!this.pointer.pending) this.startGrab(body, point)
+    this.markFirstPlay(event)
+  }
+
+  private markFirstPlay(event: PointerEvent) {
+    if (!event.isTrusted) return
+    const notify = this.onFirstPlay
+    this.onFirstPlay = undefined
+    notify?.()
   }
 
   private startGrab(body: RigidBody, point: Vector) {
@@ -384,7 +394,10 @@ export class RagdollEngine {
     this.hover = { point, time: event.timeStamp }
     if (body && previous && !this.gadgets.ice) {
       const distance = Math.hypot(point.x - previous.point.x, point.y - previous.point.y)
-      if (distance >= 0.8 && distance / Math.max(5, event.timeStamp - previous.time) < 1.24) this.director.pet(point)
+      if (distance >= 0.8 && distance / Math.max(5, event.timeStamp - previous.time) < 1.24) {
+        this.director.pet(point)
+        this.markFirstPlay(event)
+      }
     }
   }
 

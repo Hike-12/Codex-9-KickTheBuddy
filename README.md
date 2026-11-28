@@ -15,6 +15,8 @@ npm run build
 
 For Vercel, use the Vite preset. The game builds to `dist/`. Short dare links use the `/api/dare` function and a connected private Vercel Blob store. For local short-link testing, connect the store to a development environment and run `vercel dev`.
 
+Vercel Web Analytics starts after the first interaction with Buddy or a tool used on the canvas. Its visitor count measures play starts and omits visits that never interact. Dare codes and query parameters are removed from the reported page URL.
+
 ## Play
 
 | Key | Tool or action |

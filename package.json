@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@vercel/analytics": "^2.0.1",
     "@vercel/blob": "^2.9.0",
     "image-size": "^2.2.0",
     "matter-js": "^0.20.0",
